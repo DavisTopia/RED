@@ -1,5 +1,25 @@
 import * as THREE from 'three';
 
+const toonGradient = new THREE.DataTexture(
+  new Uint8Array([
+    70, 70, 70, 255,
+    115, 115, 115, 255,
+    175, 175, 175, 255,
+    235, 235, 235, 255,
+  ]),
+  4,
+  1,
+  THREE.RGBAFormat,
+);
+toonGradient.magFilter = THREE.NearestFilter;
+toonGradient.minFilter = THREE.NearestFilter;
+toonGradient.generateMipmaps = false;
+toonGradient.needsUpdate = true;
+
+export function actorToonMaterial(color: THREE.ColorRepresentation): THREE.MeshToonMaterial {
+  return new THREE.MeshToonMaterial({ color, gradientMap: toonGradient });
+}
+
 export function organicForm(height: number, width: number, depth: number, profile: readonly number[]): THREE.BufferGeometry {
   const rows = 16;
   const columns = 24;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { CreatureKind } from '../core/types';
-import { organicForm } from './ActorGeometry';
+import { actorToonMaterial, organicForm } from './ActorGeometry';
 
 export interface CreatureRig {
   model: THREE.Group;
@@ -13,10 +13,6 @@ export interface CreatureRig {
     dead: boolean,
     special: boolean,
   ): void;
-}
-
-function makeMaterial(color: number, roughness = 0.9): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness });
 }
 
 function addMesh(
@@ -40,12 +36,12 @@ export function createCreatureRig(
   const model = new THREE.Group();
   const rig = new THREE.Group();
   model.add(rig);
-  const fur = coat.clone();
-  const darkCoat = makeMaterial(kind === 'wolf' ? 0x48483f : kind === 'deer' ? 0x6e4a31 : 0x30231e);
-  const lightCoat = makeMaterial(kind === 'wolf' ? 0xaaa18a : kind === 'deer' ? 0xc3a77a : 0x79614b);
-  const eye = makeMaterial(kind === 'deer' ? 0x9a6e3d : 0x6e5134, 0.3);
-  const black = makeMaterial(0x171816, 0.28);
-  const eyeWhite = makeMaterial(kind === 'wolf' ? 0x9e8a68 : 0xc9bca1, 0.48);
+  const fur = actorToonMaterial(coat instanceof THREE.MeshStandardMaterial ? coat.color : 0xffffff);
+  const darkCoat = actorToonMaterial(kind === 'wolf' ? 0x48483f : kind === 'deer' ? 0x6e4a31 : 0x30231e);
+  const lightCoat = actorToonMaterial(kind === 'wolf' ? 0xaaa18a : kind === 'deer' ? 0xc3a77a : 0x79614b);
+  const eye = actorToonMaterial(kind === 'deer' ? 0x9a6e3d : 0x6e5134);
+  const black = actorToonMaterial(0x171816);
+  const eyeWhite = actorToonMaterial(kind === 'wolf' ? 0x9e8a68 : 0xc9bca1);
   const eyeGlint = new THREE.MeshBasicMaterial({ color: 0xfff0cf });
   const bodyLength = kind === 'bear' ? 1.12 : kind === 'deer' ? 0.76 : 1;
   const bodyHeight = kind === 'bear' ? 0.62 : kind === 'deer' ? 0.48 : 0.45;
@@ -84,7 +80,7 @@ export function createCreatureRig(
   if (kind === 'deer') {
     const belly = addMesh(new THREE.SphereGeometry(0.29, 16, 12), lightCoat, rig, new THREE.Vector3(0, shoulderHeight - 0.28, 0.015));
     belly.scale.set(0.72, 0.69, 1.2);
-    const spot = makeMaterial(0xe0c99b);
+    const spot = actorToonMaterial(0xe0c99b);
     for (const side of [-1, 1]) {
       for (let row = 0; row < 3; row++) {
         const mark = addMesh(new THREE.SphereGeometry(0.024, 8, 6), spot, rig, new THREE.Vector3(side * (0.18 - row * 0.015), shoulderHeight + 0.005, -0.18 + row * 0.15));

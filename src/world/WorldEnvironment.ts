@@ -175,9 +175,9 @@ export class WorldEnvironment {
     const uvs = new Float32Array(side * side * 2);
     const heights = new Float32Array(side * side);
     const indices = new Uint32Array(TERRAIN_SEGMENTS * TERRAIN_SEGMENTS * 6);
-    const grassColor = new THREE.Color(0xe1e7cd);
-    const dirtColor = new THREE.Color(0xc8ac7c);
-    const rockColor = new THREE.Color(0xc3c6c1);
+    const grassColor = new THREE.Color(0x94a878);
+    const dirtColor = new THREE.Color(0xb78b5d);
+    const rockColor = new THREE.Color(0x828d99);
     const blendedColor = new THREE.Color();
     const gridSpacing = WORLD_SIZE / TERRAIN_SEGMENTS;
     let vertex = 0;
@@ -489,7 +489,7 @@ export class WorldEnvironment {
     const skyPosition = skyGeometry.getAttribute('position');
     for (let i = 0; i < skyPosition.count; i++) {
       const height = smoothstep(-0.04, 0.72, skyPosition.getY(i) / 280);
-      const color = new THREE.Color(0xa9bfbd).lerp(new THREE.Color(0x839fa9), height * 0.82);
+      const color = new THREE.Color(0x93a9bd).lerp(new THREE.Color(0x657f9a), height * 0.82);
       skyColors.push(color.r, color.g, color.b);
     }
     skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(skyColors, 3));
@@ -1023,12 +1023,12 @@ export class WorldEnvironment {
 
   private buildLighting(): void {
     const hemisphere = new THREE.HemisphereLight(
-      0xdbe7dc,
-      0x4d4c38,
+      0xc8dcf5,
+      0x493a36,
       this.graphics.hemisphereLightIntensity,
     );
     this.scene.add(hemisphere);
-    this.sun = new THREE.DirectionalLight(0xffe6c6, this.graphics.directionalLightIntensity);
+    this.sun = new THREE.DirectionalLight(0xffd5a1, this.graphics.directionalLightIntensity);
     this.sun.position.set(-28, 52, 25);
     this.sun.castShadow = this.graphics.shadows;
     this.sun.shadow.mapSize.set(this.graphics.shadowMapSize, this.graphics.shadowMapSize);

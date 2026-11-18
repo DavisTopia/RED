@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Race } from '../core/types';
-import { organicForm } from './ActorGeometry';
+import { actorToonMaterial, organicForm } from './ActorGeometry';
 
 export interface CharacterRig {
   model: THREE.Group;
@@ -32,7 +32,7 @@ const RACE_STYLE: Record<Race, RaceStyle> = {
   Beastkin: { height: 1.01, width: 1.04, skin: 0x8e684d, cloth: 0x635d38, armor: 0x786d50, hair: 0x574332 },
 };
 
-function material(color: number, roughness = 0.82, metalness = 0): THREE.MeshStandardMaterial {
+function metalMaterial(color: number, roughness: number, metalness: number): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
@@ -68,18 +68,18 @@ export function createCharacterRig(race: Race): CharacterRig {
   rig.scale.set(style.width, style.height, style.width);
   model.add(rig);
 
-  const skin = material(style.skin);
-  const cloth = material(style.cloth, 0.94);
-  const leather = material(race === 'Elf' ? 0x463d2c : 0x3e3024, 0.9);
-  const armor = material(style.armor, 0.38, 0.62);
-  const trim = material(race === 'Dwarf' ? 0xb48848 : 0xb59a62, 0.42, 0.55);
-  const hair = material(style.hair, 0.96);
-  const dark = material(0x261d1a, 0.72);
-  const eye = material(0xe5d6b8, 0.32);
-  const iris = material(race === 'Elf' ? 0x83a96e : race === 'Beastkin' ? 0x9d7a3d : 0x554331, 0.3);
-  const pupil = material(0x11110f, 0.18);
+  const skin = actorToonMaterial(style.skin);
+  const cloth = actorToonMaterial(style.cloth);
+  const leather = actorToonMaterial(race === 'Elf' ? 0x463d2c : 0x3e3024);
+  const armor = metalMaterial(style.armor, 0.38, 0.62);
+  const trim = metalMaterial(race === 'Dwarf' ? 0xb48848 : 0xb59a62, 0.42, 0.55);
+  const hair = actorToonMaterial(style.hair);
+  const dark = actorToonMaterial(0x261d1a);
+  const eye = actorToonMaterial(0xe5d6b8);
+  const iris = actorToonMaterial(race === 'Elf' ? 0x76bd7b : race === 'Beastkin' ? 0xc28b46 : race === 'Dwarf' ? 0x9b6239 : 0x76513a);
+  const pupil = actorToonMaterial(0x11110f);
   const glint = new THREE.MeshBasicMaterial({ color: 0xfff5dc });
-  const lip = material(race === 'Beastkin' ? 0x352723 : 0x70483b, 0.78);
+  const lip = actorToonMaterial(race === 'Beastkin' ? 0x352723 : 0x70483b);
   let tailBone: THREE.Bone | null = null;
 
   const pelvis = new THREE.Bone();
@@ -145,7 +145,7 @@ export function createCharacterRig(race: Race): CharacterRig {
   mesh(organicForm(0.15, 0.15, 0.135, [0.15, 0.72, 1, 0.94, 0.63]), skin, head, new THREE.Vector3(0, -0.07, 0.11));
   mesh(new THREE.SphereGeometry(0.055, 14, 10), skin, head, new THREE.Vector3(0, -0.005, 0.18));
   if (race === 'Beastkin') {
-    const muzzle = mesh(organicForm(0.11, 0.105, 0.12, [0.35, 0.9, 1, 0.68]), material(0x806454), head, new THREE.Vector3(0, -0.045, 0.205));
+    const muzzle = mesh(organicForm(0.11, 0.105, 0.12, [0.35, 0.9, 1, 0.68]), actorToonMaterial(0x806454), head, new THREE.Vector3(0, -0.045, 0.205));
     muzzle.rotation.x = Math.PI / 2;
   }
   mesh(new THREE.BoxGeometry(0.11, 0.014, 0.012), lip, head, new THREE.Vector3(0, -0.105, race === 'Beastkin' ? 0.28 : 0.205));
@@ -154,12 +154,12 @@ export function createCharacterRig(race: Race): CharacterRig {
     nostril.scale.set(1, 0.7, 0.65);
   }
   for (const side of [-1, 1]) {
-    const socket = mesh(new THREE.SphereGeometry(0.044, 14, 10), dark, head, new THREE.Vector3(side * 0.075, 0.058, 0.148));
+    const socket = mesh(new THREE.SphereGeometry(0.05, 16, 12), dark, head, new THREE.Vector3(side * 0.075, 0.058, 0.148));
     socket.scale.set(1.12, 0.8, 0.55);
-    mesh(new THREE.SphereGeometry(0.032, 14, 10), eye, head, new THREE.Vector3(side * 0.075, 0.058, 0.17));
-    mesh(new THREE.SphereGeometry(0.018, 12, 10), iris, head, new THREE.Vector3(side * 0.075, 0.058, 0.195));
-    mesh(new THREE.SphereGeometry(0.009, 10, 8), pupil, head, new THREE.Vector3(side * 0.075, 0.058, 0.207));
-    mesh(new THREE.SphereGeometry(0.005, 8, 6), glint, head, new THREE.Vector3(side * 0.08, 0.066, 0.211));
+    mesh(new THREE.SphereGeometry(0.038, 16, 12), eye, head, new THREE.Vector3(side * 0.075, 0.058, 0.17));
+    mesh(new THREE.SphereGeometry(0.022, 14, 12), iris, head, new THREE.Vector3(side * 0.075, 0.058, 0.197));
+    mesh(new THREE.SphereGeometry(0.011, 10, 8), pupil, head, new THREE.Vector3(side * 0.075, 0.058, 0.211));
+    mesh(new THREE.SphereGeometry(0.007, 8, 6), glint, head, new THREE.Vector3(side * 0.082, 0.068, 0.216));
     const brow = mesh(new THREE.CapsuleGeometry(0.016, 0.075, 3, 7), hair, head, new THREE.Vector3(side * 0.075, 0.103, 0.159));
     brow.rotation.z = side * -0.12;
     const ear = mesh(new THREE.SphereGeometry(0.055, 10, 8), skin, head, new THREE.Vector3(side * 0.19, 0.035, 0));
@@ -168,7 +168,7 @@ export function createCharacterRig(race: Race): CharacterRig {
       const point = mesh(new THREE.ConeGeometry(race === 'Elf' ? 0.052 : 0.075, race === 'Elf' ? 0.25 : 0.2, 8), skin, head, new THREE.Vector3(side * 0.27, 0.075, 0));
       point.rotation.z = side * -Math.PI / 2;
       if (race === 'Beastkin') {
-        const inner = mesh(new THREE.ConeGeometry(0.039, 0.115, 7), material(0x76504a), head, new THREE.Vector3(side * 0.271, 0.068, 0.035));
+        const inner = mesh(new THREE.ConeGeometry(0.039, 0.115, 7), actorToonMaterial(0x76504a), head, new THREE.Vector3(side * 0.271, 0.068, 0.035));
         inner.rotation.z = side * -Math.PI / 2;
       }
     }
@@ -289,7 +289,7 @@ export function createCharacterRig(race: Race): CharacterRig {
     tail.rotation.x = -0.55;
     rig.add(tail);
     mesh(organicForm(0.58, 0.09, 0.09, [0.66, 0.8, 0.7, 0.48, 0.25]), hair, tail, new THREE.Vector3(0, -0.25, 0));
-    const tailTip = mesh(new THREE.SphereGeometry(0.105, 12, 10), material(0xdbc2a1), tail, new THREE.Vector3(0, -0.52, 0));
+    const tailTip = mesh(new THREE.SphereGeometry(0.105, 12, 10), actorToonMaterial(0xdbc2a1), tail, new THREE.Vector3(0, -0.52, 0));
     tailTip.scale.set(1, 1.25, 1);
   }
 

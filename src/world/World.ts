@@ -29,8 +29,8 @@ export class World {
     );
     physics.updateSceneQueries();
     this.spawn.y = this.getSurfaceHeight(this.spawn.x, this.spawn.z);
-    this.scene.background = new THREE.Color(0xa9bfbd);
-    this.scene.fog = new THREE.Fog(0xa9bfbd, 52, 158);
+    this.scene.background = new THREE.Color(0x93a9bd);
+    this.scene.fog = new THREE.Fog(0x93a9bd, 52, 158);
   }
 
   getSurfaceHeight(x: number, z: number): number {
