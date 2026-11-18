@@ -1,0 +1,372 @@
+import * as THREE from 'three';
+import * as RAPIER from '@dimforge/rapier3d-compat';
+import { AssetManager } from '../core/AssetManager';
+import { InputManager } from '../core/InputManager';
+import { SaveManager } from '../core/SaveManager';
+import { createCharacter, type CharacterData, type Race } from '../core/types';
+import { CreatureSystem } from '../creatures/CreatureSystem';
+import type { Creature } from '../creatures/Creature';
+import { Player } from '../player/Player';
+import { World } from '../world/World';
+import { UI } from '../ui/UI';
+
+export class Game {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly camera = new THREE.PerspectiveCamera(68, 1, 0.1, 180);
+  private readonly assets = new AssetManager();
+  private readonly saves = new SaveManager();
+  private readonly input: InputManager;
+  private readonly ui: UI;
+  private physics!: RAPIER.World;
+  private world!: World;
+  private player: Player | null = null;
+  private creatures: CreatureSystem | null = null;
+  private savedCharacter: CharacterData | null = null;
+  private playing = false;
+  private disposed = false;
+  private lastFrame = 0;
+  private attackCooldown = 0;
+  private respawnTimer = 0;
+  private autoSaveTimer = 0;
+  private sprintTouch = false;
+  private blockTouch = false;
+  private promptText = '';
+  private readonly lootDrops: Array<{ mesh: THREE.Mesh; item: string }> = [];
+
+  constructor(private readonly canvas: HTMLCanvasElement, root: HTMLElement) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.shadowMap.enabled = !window.matchMedia('(pointer: coarse)').matches;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
+    this.input = new InputManager(root, canvas);
+    this.ui = new UI(root, {
+      start: (race, name) => this.startNewCharacter(race, name),
+      continue: () => this.continueCharacter(),
+      attack: () => { this.input.attackPressed = true; },
+      jump: () => { this.input.jumpPressed = true; },
+      interact: () => { this.input.interactPressed = true; },
+      spirit: () => { this.input.spiritPressed = true; },
+      camera: () => { this.input.cameraPressed = true; },
+      toggleInventory: () => this.toggleInventory(),
+      setBlocking: (blocked) => { this.blockTouch = blocked; },
+      setSprinting: (sprinting) => { this.sprintTouch = sprinting; },
+    });
+    this.canvas.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button === 0 && this.playing) {
+        this.input.attackPressed = true;
+      }
+    });
+    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    window.addEventListener('resize', this.resize);
+    this.resize();
+  }
+
+  async start(): Promise<void> {
+    await RAPIER.init();
+    this.physics = new RAPIER.World({ x: 0, y: -19.6, z: 0 });
+    this.physics.timestep = 1 / 60;
+    this.world = new World(this.assets, this.physics);
+    this.camera.position.set(0, 5, 20);
+    this.camera.lookAt(0, 0, 0);
+    await this.saves.open();
+    this.savedCharacter = await this.saves.load();
+    this.ui.showSavedCharacter(this.savedCharacter);
+    this.renderer.setAnimationLoop(this.frame);
+  }
+
+  private startNewCharacter(race: Race, name: string): void {
+    this.launchCharacter(createCharacter(race, name.slice(0, 20) || 'Wayfarer'));
+  }
+
+  private continueCharacter(): void {
+    if (this.savedCharacter) this.launchCharacter(this.savedCharacter);
+  }
+
+  private launchCharacter(character: CharacterData): void {
+    if (this.playing) this.disposeActors();
+    this.clearLootDrops();
+    this.savedCharacter = character;
+    this.player = new Player(this.physics, this.camera, character);
+    this.world.scene.add(this.player.model);
+    this.creatures = new CreatureSystem(this.world.scene, this.physics, this.assets, character);
+    this.playing = true;
+    this.ui.startGame(character);
+    this.ui.toastMessage(`Welcome to the valley, ${character.name}.`);
+    void this.persist();
+  }
+
+  private frame = (time: number): void => {
+    if (this.disposed) return;
+    const rawDelta = this.lastFrame === 0 ? 0 : (time - this.lastFrame) / 1000;
+    const delta = Math.min(rawDelta, 0.05);
+    this.lastFrame = time;
+    this.physics.timestep = Math.max(delta, 1 / 120);
+    if (this.playing && this.player && this.creatures) this.updateGame(delta);
+    this.renderer.render(this.world.scene, this.camera);
+  };
+
+  private updateGame(delta: number): void {
+    const player = this.player!;
+    const creatures = this.creatures!;
+    this.attackCooldown = Math.max(0, this.attackCooldown - delta);
+    this.respawnTimer = Math.max(0, this.respawnTimer - delta);
+    this.autoSaveTimer += delta;
+    const look = this.input.takeLookDelta();
+    if (this.input.cameraPressed) {
+      player.cameraManager.toggle();
+      this.ui.toastMessage(`Camera · ${player.cameraManager.mode}`);
+    }
+
+    player.blocking = this.blockTouch || this.input.isDown('KeyB');
+    const movement = this.input.move();
+    const sprinting = this.sprintTouch || this.input.isDown('ShiftLeft') || this.input.isDown('ShiftRight');
+    player.update(delta, movement, player.cameraManager.yaw, sprinting, this.input.jumpPressed, look);
+    this.input.jumpPressed = false;
+
+    const position = player.model.position;
+    creatures.update(
+      delta,
+      position,
+      (damage) => {
+        player.takeDamage(damage);
+        if (player.health <= 0 && this.respawnTimer === 0) this.handleDeath();
+      },
+      (creature) => this.rewardCreature(creature),
+    );
+
+    if (this.input.attackPressed) this.performAttack();
+    if (this.input.interactPressed) this.interact();
+    if (this.input.spiritPressed) this.toggleSpirit();
+    if (this.input.inventoryPressed) this.toggleInventory();
+    this.input.attackPressed = false;
+    this.input.interactPressed = false;
+    this.input.spiritPressed = false;
+    this.input.inventoryPressed = false;
+    this.input.cameraPressed = false;
+
+    this.discoverLandmarks();
+    this.updatePrompt();
+    this.physics.step();
+    this.ui.update({
+      character: player.character,
+      health: player.health,
+      stamina: player.stamina,
+      mana: player.mana,
+      camera: player.cameraManager.mode,
+      prompt: this.promptText,
+      companion: creatures.companion,
+      spiritActive: creatures.spiritActive,
+      spiritCooldown: creatures.spiritRemainingCooldown,
+    });
+    if (this.autoSaveTimer > 20) {
+      this.autoSaveTimer = 0;
+      void this.persist();
+    }
+  }
+
+  private performAttack(): void {
+    const player = this.player!;
+    if (this.attackCooldown > 0) return;
+    this.attackCooldown = 0.55;
+    player.attackAnimation();
+    const forward = new THREE.Vector3(-Math.sin(player.cameraManager.yaw), 0, -Math.cos(player.cameraManager.yaw));
+    const target = this.creatures!.creatures
+      .filter((creature) => creature.mood !== 'dead' && creature.mood !== 'tamed')
+      .map((creature) => ({ creature, offset: creature.model.position.clone().sub(player.model.position) }))
+      .filter(({ offset }) => offset.length() <= 3.2 && offset.normalize().dot(forward) > 0.12)
+      .sort((a, b) => a.creature.model.position.distanceTo(player.model.position) - b.creature.model.position.distanceTo(player.model.position))[0];
+    if (!target) {
+      this.ui.toastMessage('Your blade cuts through empty air.');
+      return;
+    }
+    target.creature.takeDamage(18 + player.attributes.strength * 0.8);
+    if (target.creature.health > 0) this.ui.toastMessage(`Hit ${target.creature.kind} · ${Math.ceil(target.creature.health)} HP`);
+  }
+
+  private interact(): void {
+    const player = this.player!;
+    if (this.creatures!.tameNearest(player.model.position)) {
+      player.character.companions = 1;
+      player.character.inventory.push('Wolf companion');
+      this.ui.toastMessage('The wolf trusts you now. Your companion follows your path.');
+      void this.persist();
+      return;
+    }
+    const dropIndex = this.lootDrops.findIndex(({ mesh }) => mesh.position.distanceTo(player.model.position) < 2.7);
+    if (dropIndex !== -1) {
+      const [drop] = this.lootDrops.splice(dropIndex, 1);
+      player.character.inventory.push(drop.item);
+      this.world.scene.remove(drop.mesh);
+      this.ui.toastMessage(`${drop.item} added to your pack.`);
+      void this.persist();
+      return;
+    }
+    const location = this.world.landmarks.find((landmark) => landmark.position.distanceTo(player.model.position) < 5);
+    if (location) {
+      if (!player.character.discoveredLocations.includes(location.name)) {
+        player.character.discoveredLocations.push(location.name);
+        this.ui.toastMessage(`Discovered · ${location.name}`);
+        void this.persist();
+      } else {
+        this.ui.toastMessage(location.name);
+      }
+      return;
+    }
+    this.ui.toastMessage('Nothing nearby answers your call.');
+  }
+
+  private toggleSpirit(): void {
+    const creatures = this.creatures!;
+    if (creatures.spiritActive) {
+      creatures.dismissSpirit();
+      this.ui.toastMessage('The spirit returns to the unseen realm.');
+      return;
+    }
+    if (creatures.summonSpirit(this.player!.model.position)) {
+      this.ui.toastMessage('Spirit of the Wolf · summoned for 18 seconds.');
+    } else {
+      this.ui.toastMessage(`Spirit recovering · ${Math.ceil(creatures.spiritRemainingCooldown)}s`);
+    }
+  }
+
+  private rewardCreature(creature: Creature): void {
+    let item: string;
+    let experience: number;
+    if (creature.kind === 'deer') {
+      item = 'Deer hide';
+      experience = 18;
+    } else if (creature.kind === 'wolf') {
+      item = 'Wolf pelt';
+      experience = 30;
+    } else {
+      item = 'Bear claw';
+      experience = 55;
+    }
+    const mesh = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.24, 0),
+      new THREE.MeshStandardMaterial({ color: 0xd5b76d, emissive: 0x594321, emissiveIntensity: 0.8, roughness: 0.45 }),
+    );
+    mesh.position.copy(creature.model.position).add(new THREE.Vector3(0, 0.3, 0));
+    mesh.castShadow = true;
+    this.world.scene.add(mesh);
+    this.lootDrops.push({ mesh, item });
+    this.addExperience(experience);
+    this.ui.toastMessage(`${item} dropped · +${experience} XP · press E to collect`);
+    void this.persist();
+  }
+
+  private addExperience(amount: number): void {
+    const character = this.player!.character;
+    character.xp += amount;
+    let requirement = 100 + (character.level - 1) * 75;
+    while (character.xp >= requirement) {
+      character.xp -= requirement;
+      character.level++;
+      character.attributes.health += 12;
+      character.attributes.stamina += 8;
+      character.attributes.mana += 6;
+      character.attributes.strength += 2;
+      character.attributes.agility += 1;
+      character.attributes.intelligence += 1;
+      character.attributes.defense += 1;
+      this.player!.health = character.attributes.health;
+      this.player!.stamina = character.attributes.stamina;
+      this.player!.mana = character.attributes.mana;
+      this.ui.toastMessage(`Level ${character.level} reached · attributes increased.`);
+      requirement = 100 + (character.level - 1) * 75;
+    }
+  }
+
+  private handleDeath(): void {
+    this.respawnTimer = 3;
+    this.player!.health = 0;
+    this.ui.toastMessage('You have fallen · returning to the valley in 3 seconds.');
+    window.setTimeout(() => {
+      if (!this.playing || !this.player) return;
+      this.player.restore();
+      this.ui.toastMessage('You awaken at the valley entrance.');
+    }, 3000);
+  }
+
+  private discoverLandmarks(): void {
+    const player = this.player!;
+    for (const landmark of this.world.landmarks) {
+      if (landmark.position.distanceTo(player.model.position) >= 6) continue;
+      if (player.character.discoveredLocations.includes(landmark.name)) continue;
+      player.character.discoveredLocations.push(landmark.name);
+      this.ui.toastMessage(`Discovered · ${landmark.name}`);
+      void this.persist();
+    }
+  }
+
+  private updatePrompt(): void {
+    const position = this.player!.model.position;
+    const wolf = this.creatures!.creatures.find((creature) =>
+      creature.kind === 'wolf' && creature.mood === 'hostile' && creature.health <= 24
+      && creature.model.position.distanceTo(position) < 3,
+    );
+    if (wolf) {
+      this.promptText = 'E · Tame weakened wolf';
+      return;
+    }
+    const drop = this.lootDrops.find(({ mesh }) => mesh.position.distanceTo(position) < 2.7);
+    if (drop) {
+      this.promptText = `E · Collect ${drop.item}`;
+      return;
+    }
+    const landmark = this.world.landmarks.find((place) => place.position.distanceTo(position) < 5);
+    this.promptText = landmark ? `E · Explore ${landmark.name}` : '';
+  }
+
+  private toggleInventory(): void {
+    this.ui.toggleInventory();
+    this.input.inventoryPressed = false;
+  }
+
+  private async persist(): Promise<void> {
+    if (!this.player) return;
+    try {
+      await this.saves.save(this.player.character);
+    } catch (error) {
+      console.error('Could not save RED progress.', error);
+      this.ui.toastMessage('Save failed · check browser storage permissions.');
+    }
+  }
+
+  private disposeActors(): void {
+    if (this.player) {
+      this.world.scene.remove(this.player.model);
+      this.player.dispose();
+    }
+    this.creatures?.dispose();
+    this.player = null;
+    this.creatures = null;
+  }
+
+  private clearLootDrops(): void {
+    for (const drop of this.lootDrops) this.world.scene.remove(drop.mesh);
+    this.lootDrops.length = 0;
+  }
+
+  private resize = (): void => {
+    const width = Math.max(1, this.canvas.clientWidth);
+    const height = Math.max(1, this.canvas.clientHeight);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(width, height, false);
+  };
+
+  dispose(): void {
+    this.disposed = true;
+    this.renderer.setAnimationLoop(null);
+    this.disposeActors();
+    this.clearLootDrops();
+    this.world?.dispose();
+    this.input.dispose();
+    this.renderer.dispose();
+    this.physics?.free();
+  }
+}
