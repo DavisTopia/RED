@@ -243,6 +243,16 @@ export function createCreatureRig(
     tailTip.scale.set(0.85, 1.2, 0.8);
   }
 
+  const baseColors = new Map<THREE.MeshToonMaterial, THREE.Color>();
+  const hitTint = new THREE.Color(0xff3d35);
+  model.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const surfaces = Array.isArray(object.material) ? object.material : [object.material];
+    for (const surface of surfaces) {
+      if (surface instanceof THREE.MeshToonMaterial) baseColors.set(surface, surface.color.clone());
+    }
+  });
+
   let elapsed = Math.random() * Math.PI * 2;
   let attackTime = 0;
   let specialAttackTime = 0;
@@ -259,12 +269,17 @@ export function createCreatureRig(
       attackTime = Math.max(0, attackTime - delta);
       specialAttackTime = Math.max(0, specialAttackTime - delta);
       damageTime = Math.max(0, damageTime - delta);
+      const hitFlash = Math.min(1, damageTime / 0.16);
+      for (const [surface, baseColor] of baseColors) {
+        surface.color.copy(baseColor).lerp(hitTint, hitFlash * 0.78);
+      }
       const gaitSpeed = running ? 12 : 8;
       const stride = Math.min(1, movement) * (running ? 0.7 : 0.42);
       for (const leg of legs) {
         const phase = elapsed * gaitSpeed + leg.phase;
         const swipe = specialAttackTime > 0 && leg.front;
-        leg.hip.rotation.x = swipe ? -0.78 : Math.sin(phase) * stride;
+        const pounce = kind === 'wolf' && attackTime > 0 && leg.front;
+        leg.hip.rotation.x = swipe ? -0.78 : pounce ? -0.6 : Math.sin(phase) * stride;
         leg.knee.rotation.x = Math.max(0, Math.sin(phase + 0.65)) * stride * 0.72;
       }
       tail.rotation.x = -0.55 + Math.sin(elapsed * 3.2) * 0.16;
@@ -276,6 +291,9 @@ export function createCreatureRig(
       } else {
         rig.rotation.z = THREE.MathUtils.damp(rig.rotation.z, damageTime > 0 ? -0.17 : 0, 7, delta);
         rig.position.y = THREE.MathUtils.damp(rig.position.y, movement > 0.05 ? Math.abs(Math.sin(elapsed * gaitSpeed * 2)) * (running ? 0.055 : 0.025) : Math.sin(elapsed * 2) * 0.009, 9, delta);
+        rig.position.z = kind === 'wolf' && attackTime > 0
+          ? Math.sin((attackTime / 0.46) * Math.PI) * 0.12
+          : 0;
       }
     },
   };

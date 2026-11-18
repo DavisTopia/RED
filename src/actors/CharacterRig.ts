@@ -13,6 +13,7 @@ export interface CharacterRig {
     dead: boolean,
     blocking: boolean,
     jumping: boolean,
+    attackSequence?: number,
   ): void;
 }
 
@@ -300,11 +301,15 @@ export function createCharacterRig(race: Race): CharacterRig {
   let sprintBlend = 0;
   let blockBlend = 0;
   let jumpBlend = 0;
+  let attackSequence = 0;
   return {
     model,
-    update(delta, movement, sprinting, attacking, takingDamage, dead, blocking, jumping) {
+    update(delta, movement, sprinting, attacking, takingDamage, dead, blocking, jumping, sequence = 0) {
       elapsed += delta;
-      if (attacking) attackTime = 0.28;
+      if (attacking) {
+        attackTime = 0.42;
+        attackSequence = sequence % 3;
+      }
       if (takingDamage) damageTime = 0.22;
       attackTime = Math.max(0, attackTime - delta);
       damageTime = Math.max(0, damageTime - delta);
@@ -347,10 +352,31 @@ export function createCharacterRig(race: Race): CharacterRig {
         const attack = attackTime > 0 && side > 0;
         const swing = -Math.sin(gait + (side < 0 ? 0 : Math.PI)) * stride * 0.55;
         const guarded = THREE.MathUtils.lerp(THREE.MathUtils.lerp(swing, -1.05, blockBlend), -0.55, jumpBlend);
-        upperArm.rotation.x = dead ? 0.9 : attack ? -1.65 + (attackTime / 0.28) * 0.38 : guarded;
-        upperArm.rotation.z = attack ? -0.35 : side * (0.42 * blockBlend + 0.12 * jumpBlend);
+        const attackProgress = 1 - attackTime / 0.42;
+        const windupX = attackSequence === 2 ? -2.05 : -1.45;
+        const windupZ = attackSequence === 1 ? 1.2 : 0.75;
+        const followX = attackSequence === 2 ? 1.05 : 0.55;
+        const followZ = attackSequence === 1 ? -1.25 : -0.8;
+        let attackX: number;
+        let attackZ: number;
+        if (attackProgress < 0.32) {
+          const windup = attackProgress / 0.32;
+          attackX = THREE.MathUtils.lerp(-0.35, windupX, windup);
+          attackZ = THREE.MathUtils.lerp(0.12, windupZ, windup);
+        } else if (attackProgress < 0.7) {
+          const slash = (attackProgress - 0.32) / 0.38;
+          attackX = THREE.MathUtils.lerp(windupX, followX, slash);
+          attackZ = THREE.MathUtils.lerp(windupZ, followZ, slash);
+        } else {
+          const recovery = (attackProgress - 0.7) / 0.3;
+          attackX = THREE.MathUtils.lerp(followX, 0.1, recovery);
+          attackZ = THREE.MathUtils.lerp(followZ, 0, recovery);
+        }
+        upperArm.rotation.x = dead ? 0.9 : attack ? attackX : guarded;
+        upperArm.rotation.z = attack ? attackZ : side * (0.42 * blockBlend + 0.12 * jumpBlend);
         if (elbow instanceof THREE.Bone) {
-          elbow.rotation.x = attack ? -0.15 : -0.68 * blockBlend + 0.15 * jumpBlend;
+          const elbowAttack = attackProgress < 0.32 ? -0.8 : attackProgress < 0.7 ? 0.35 : 0.1;
+          elbow.rotation.x = attack ? elbowAttack : -0.68 * blockBlend + 0.15 * jumpBlend;
         }
       });
     },

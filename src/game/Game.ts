@@ -13,6 +13,22 @@ import { Player } from '../player/Player';
 import { World } from '../world/World';
 import { UI } from '../ui/UI';
 
+interface HitEffect {
+  points: THREE.Points;
+  material: THREE.PointsMaterial;
+  velocities: THREE.Vector3[];
+  remaining: number;
+  duration: number;
+}
+
+interface PendingAttack {
+  target: Creature;
+  damage: number;
+  direction: THREE.Vector3;
+  sequence: number;
+  remaining: number;
+}
+
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly camera = new THREE.PerspectiveCamera(68, 1, 0.1, 180);
@@ -33,6 +49,10 @@ export class Game {
   private disposed = false;
   private lastFrame = 0;
   private attackCooldown = 0;
+  private comboStep = 0;
+  private comboWindow = 0;
+  private pendingAttack: PendingAttack | null = null;
+  private readonly hitEffects: HitEffect[] = [];
   private respawnTimer = 0;
   private autoSaveTimer = 0;
   private deathTimeout = 0;
@@ -88,6 +108,7 @@ export class Game {
     this.physics = new RAPIER.World({ x: 0, y: -19.6, z: 0 });
     this.physics.timestep = 1 / 60;
     this.world = new World(this.assets, this.physics, this.graphics);
+    this.world.scene.add(this.camera);
     this.positionMenuCamera();
     await this.saves.open();
     if (this.disposed) {
@@ -146,6 +167,7 @@ export class Game {
     this.lastFrame = time;
     this.physics.timestep = Math.max(delta, 1 / 120);
     this.world.update(delta);
+    this.updateHitEffects(delta);
     if (this.playing && this.player && this.creatures) this.updateGame(delta);
     else this.updateMenuPreview(delta);
     this.renderer.render(this.world.scene, this.camera);
@@ -196,6 +218,8 @@ export class Game {
     const player = this.player!;
     const creatures = this.creatures!;
     this.attackCooldown = Math.max(0, this.attackCooldown - delta);
+    this.comboWindow = Math.max(0, this.comboWindow - delta);
+    if (this.comboWindow === 0) this.comboStep = 0;
     this.respawnTimer = Math.max(0, this.respawnTimer - delta);
     this.autoSaveTimer += delta;
     const look = this.input.takeLookDelta();
@@ -221,6 +245,7 @@ export class Game {
       (creature) => this.rewardCreature(creature),
     );
 
+    this.updatePendingAttack(delta);
     if (this.input.attackPressed) this.performAttack();
     if (this.input.interactPressed) this.interact();
     if (this.input.spiritPressed) this.toggleSpirit();
@@ -260,20 +285,101 @@ export class Game {
   private performAttack(): void {
     const player = this.player!;
     if (this.attackCooldown > 0) return;
-    this.attackCooldown = 0.55;
-    player.attackAnimation();
+    const sequence = this.comboWindow > 0 ? (this.comboStep + 1) % 3 : 0;
+    this.comboStep = sequence;
+    this.comboWindow = 1.15;
+    this.attackCooldown = sequence === 2 ? 0.58 : 0.34;
+    player.attackAnimation(sequence);
     const forward = new THREE.Vector3(-Math.sin(player.cameraManager.yaw), 0, -Math.cos(player.cameraManager.yaw));
     const target = this.creatures!.creatures
       .filter((creature) => creature.mood !== 'dead' && creature.mood !== 'tamed')
       .map((creature) => ({ creature, offset: creature.model.position.clone().sub(player.model.position) }))
-      .filter(({ offset }) => offset.length() <= 3.2 && offset.normalize().dot(forward) > 0.12)
+      .filter(({ offset }) => offset.length() <= 2.8 && offset.normalize().dot(forward) > 0.2)
       .sort((a, b) => a.creature.model.position.distanceTo(player.model.position) - b.creature.model.position.distanceTo(player.model.position))[0];
     if (!target) {
-      this.ui.toastMessage('Your blade cuts through empty air.');
+      this.ui.toastMessage('Miss · face a creature and strike within range.');
       return;
     }
-    target.creature.takeDamage(18 + player.attributes.strength * 0.8);
-    if (target.creature.health > 0) this.ui.toastMessage(`Hit ${target.creature.kind} · ${Math.ceil(target.creature.health)} HP`);
+    const damage = [16, 20, 28][sequence] + player.attributes.strength * 0.65;
+    this.pendingAttack = {
+      target: target.creature,
+      damage,
+      direction: target.offset.normalize(),
+      sequence,
+      remaining: [0.1, 0.12, 0.17][sequence],
+    };
+  }
+
+  private updatePendingAttack(delta: number): void {
+    if (!this.pendingAttack) return;
+    this.pendingAttack.remaining -= delta;
+    if (this.pendingAttack.remaining > 0) return;
+    const attack = this.pendingAttack;
+    this.pendingAttack = null;
+    if (attack.target.mood === 'dead' || attack.target.mood === 'tamed') return;
+    attack.target.takeDamage(attack.damage, attack.direction);
+    this.spawnHitEffect(
+      attack.target.model.position.clone().add(new THREE.Vector3(0, 0.78, 0)),
+      attack.sequence,
+    );
+    this.ui.toastMessage(
+      `Combo ${attack.sequence + 1}/3 · ${attack.target.kind} · ${Math.ceil(attack.damage)} damage`,
+    );
+  }
+
+  private spawnHitEffect(position: THREE.Vector3, sequence: number): void {
+    const count = 9;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    const material = new THREE.PointsMaterial({
+      color: sequence === 2 ? 0x9fe8ff : sequence === 1 ? 0xff9d55 : 0xffd66b,
+      size: sequence === 2 ? 0.2 : 0.16,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.position.copy(position);
+    points.frustumCulled = false;
+    this.world.scene.add(points);
+    const velocities = Array.from({ length: count }, (_, index) => {
+      const angle = (index / count) * Math.PI * 2;
+      const speed = 1.2 + (index % 3) * 0.35;
+      return new THREE.Vector3(
+        Math.cos(angle) * speed,
+        0.6 + (index % 3) * 0.35,
+        Math.sin(angle) * speed,
+      );
+    });
+    this.hitEffects.push({ points, material, velocities, remaining: 0.28, duration: 0.28 });
+  }
+
+  private updateHitEffects(delta: number): void {
+    for (let index = this.hitEffects.length - 1; index >= 0; index--) {
+      const effect = this.hitEffects[index];
+      effect.remaining = Math.max(0, effect.remaining - delta);
+      const progress = 1 - effect.remaining / effect.duration;
+      const positions = effect.points.geometry.getAttribute('position');
+      for (let particle = 0; particle < effect.velocities.length; particle++) {
+        const velocity = effect.velocities[particle];
+        velocity.y -= delta * 4.5;
+        positions.setXYZ(
+          particle,
+          positions.getX(particle) + velocity.x * delta,
+          positions.getY(particle) + velocity.y * delta,
+          positions.getZ(particle) + velocity.z * delta,
+        );
+      }
+      positions.needsUpdate = true;
+      effect.material.opacity = 0.95 * (1 - progress);
+      if (effect.remaining === 0) {
+        this.world.scene.remove(effect.points);
+        effect.points.geometry.dispose();
+        effect.material.dispose();
+        this.hitEffects.splice(index, 1);
+      }
+    }
   }
 
   private interact(): void {
@@ -480,6 +586,8 @@ export class Game {
     this.disposeActors();
     this.disposeMenuPreview();
     this.clearLootDrops();
+    this.clearHitEffects();
+    this.world?.scene.remove(this.camera);
     this.world?.dispose();
     this.assets.dispose();
     this.input.dispose();
@@ -487,5 +595,14 @@ export class Game {
     this.saves.close();
     this.renderer.dispose();
     this.physics?.free();
+  }
+
+  private clearHitEffects(): void {
+    for (const effect of this.hitEffects) {
+      this.world.scene.remove(effect.points);
+      effect.points.geometry.dispose();
+      effect.material.dispose();
+    }
+    this.hitEffects.length = 0;
   }
 }

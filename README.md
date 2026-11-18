@@ -37,11 +37,11 @@ Use the on-screen joystick and action buttons. Drag anywhere outside the control
 - Wind-swaying trees and ground cover, distant atmospheric fog, soft particles, daylight color shifts, and generated ambient wind and bird calls.
 - Third- and first-person cameras driving the same Rapier character controller.
 - Four starting races with distinct base attributes.
-- Wolves that pursue and attack, deer that flee, and territorial bears that attack nearby players.
-- Sword damage, blocking, health/death/respawn, creature loot, XP, levels, a basic inventory, wolf taming/following, and a timed spectral wolf ability.
+- Wolves that pursue and attack, deer that flee, and territorial bears that telegraph attacks.
+- A timed three-hit sword combo with visible hit feedback and knockback, alongside blocking, health/death/respawn, creature loot, XP, levels, a basic inventory, wolf taming/following, and a timed spectral wolf ability.
 - IndexedDB local saves for character progression, inventory, equipment, companions, and discovered landmarks.
 
-Creature visuals, character appearance, and animation are procedural placeholders; there are no imported character/creature models, skeletal animation clips, equipment management, detailed quests, multiplayer, or a full RPG content set in this milestone. The spirit ability is combat-ready but has no separate progression UI yet. The cave is an explorable landmark entrance, not a finished dungeon.
+Creature visuals, character appearance, and animation are procedural placeholders; there are no imported character/creature models, skeletal animation clips, equipment management, detailed quests, multiplayer, boss encounters, boss AI, boss arenas, or a full RPG content set in this milestone. The spirit ability is combat-ready but has no separate progression UI yet. The cave is an explorable landmark entrance, not a finished dungeon.
 
 ## GitHub Pages
 

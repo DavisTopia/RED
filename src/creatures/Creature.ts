@@ -17,6 +17,9 @@ export class Creature {
   private readonly groundOffset: number;
   private visualRig!: CreatureRig;
   private damagePending = false;
+  private attackWindup = 0;
+  private knockbackRemaining = 0;
+  private readonly knockbackDirection = new THREE.Vector3();
   private readonly healthBar: THREE.Mesh;
   private readonly healthBarTrack: THREE.Mesh;
 
@@ -93,6 +96,18 @@ export class Creature {
     const current = new THREE.Vector3(position.x, position.y, position.z);
     const distance = current.distanceTo(playerPosition);
     this.attackCooldown = Math.max(0, this.attackCooldown - delta);
+    if (this.attackWindup > 0) {
+      this.attackWindup = Math.max(0, this.attackWindup - delta);
+      if (this.attackWindup === 0) {
+        const hitRange = this.kind === 'bear' ? 2.5 : 1.8;
+        if (distance <= hitRange) {
+          callbacks.damagePlayer(this.kind === 'bear' ? 19 : 9);
+          this.attackCooldown = this.kind === 'bear' ? 1.9 : 1.35;
+        } else {
+          this.attackCooldown = 0.35;
+        }
+      }
+    }
     let target: THREE.Vector3 | null = null;
     let speed = 0;
     let attackStarted = false;
@@ -114,18 +129,16 @@ export class Creature {
       if (distance > 1.8) {
         target = playerPosition;
         speed = 3.5;
-      } else if (this.attackCooldown === 0) {
-        callbacks.damagePlayer(9);
-        this.attackCooldown = 1.35;
+      } else if (this.attackCooldown === 0 && this.attackWindup === 0) {
+        this.attackWindup = 0.38;
         attackStarted = true;
       }
     } else if (this.kind === 'bear' && distance < 10) {
       if (distance > 2.5) {
         target = playerPosition;
         speed = 2.45;
-      } else if (this.attackCooldown === 0) {
-        callbacks.damagePlayer(19);
-        this.attackCooldown = 1.9;
+      } else if (this.attackCooldown === 0 && this.attackWindup === 0) {
+        this.attackWindup = 0.62;
         attackStarted = true;
         specialAttack = true;
       }
@@ -146,6 +159,12 @@ export class Creature {
         movementSpeed = speed;
         this.model.rotation.y = Math.atan2(direction.x, direction.z);
       }
+    }
+    if (this.knockbackRemaining > 0) {
+      const strength = this.knockbackRemaining / 0.18;
+      dx += this.knockbackDirection.x * 4.5 * strength * delta;
+      dz += this.knockbackDirection.z * 4.5 * strength * delta;
+      this.knockbackRemaining = Math.max(0, this.knockbackRemaining - delta);
     }
     this.controller.computeColliderMovement(this.collider, { x: dx, y: -0.1, z: dz });
     const movement = this.controller.computedMovement();
@@ -174,10 +193,14 @@ export class Creature {
     this.healthBar.position.x = -(1 - this.healthBar.scale.x) * 0.38;
   }
 
-  takeDamage(amount: number): void {
+  takeDamage(amount: number, knockbackDirection?: THREE.Vector3): void {
     if (this.mood === 'dead' || this.mood === 'tamed') return;
     this.health = Math.max(0, this.health - amount);
     this.damagePending = true;
+    if (knockbackDirection && knockbackDirection.lengthSq() > 0) {
+      this.knockbackDirection.copy(knockbackDirection).setY(0).normalize();
+      this.knockbackRemaining = 0.18;
+    }
     if (this.health === 0) {
       this.mood = 'dead';
       this.collider.setEnabled(false);

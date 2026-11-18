@@ -21,12 +21,14 @@ export class Player {
   private readonly capsuleHalfHeight: number;
   private visualRig!: CharacterRig;
   private attackTrail!: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+  private firstPersonAttackTrail!: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
   private attackTrailMaterial!: THREE.MeshBasicMaterial;
   private attackEffectRemaining = 0;
+  private attackSequence = 0;
 
   constructor(
     private readonly physics: RAPIER.World,
-    camera: THREE.PerspectiveCamera,
+    private readonly camera: THREE.PerspectiveCamera,
     readonly character: CharacterData,
     private readonly groundHeightAt: (x: number, z: number) => number = () => 0,
   ) {
@@ -68,16 +70,21 @@ export class Player {
       side: THREE.DoubleSide,
     });
     this.attackTrail = new THREE.Mesh(
-      new THREE.TorusGeometry(0.52, 0.018, 5, 18, Math.PI * 0.78),
+      new THREE.TorusGeometry(0.82, 0.035, 6, 28, Math.PI * 0.88),
       this.attackTrailMaterial,
     );
-    this.attackTrail.position.set(0, -0.45, 0.08);
-    this.attackTrail.rotation.z = -0.45;
+    this.attackTrail.position.set(0, -0.25, 0.08);
+    this.attackTrail.rotation.set(0, 0, -0.9);
     this.attackTrail.visible = false;
     this.attackTrail.castShadow = false;
     this.attackTrail.receiveShadow = false;
     const weaponSocket = this.visualRig.model.getObjectByName('WeaponSocket') ?? this.visualRig.model;
     weaponSocket.add(this.attackTrail);
+    this.firstPersonAttackTrail = new THREE.Mesh(this.attackTrail.geometry, this.attackTrailMaterial);
+    this.firstPersonAttackTrail.position.set(0.42, -0.2, -0.72);
+    this.firstPersonAttackTrail.rotation.set(0, 0, -0.9);
+    this.firstPersonAttackTrail.visible = false;
+    this.camera.add(this.firstPersonAttackTrail);
     this.model.position.set(0, this.groundHeightAt(0, 13), 13);
   }
 
@@ -138,16 +145,21 @@ export class Player {
       this.health <= 0,
       this.blocking,
       !this.controller.computedGrounded(),
+      this.attackSequence,
     );
     this.attackPending = false;
     this.damagePending = false;
     this.attackEffectRemaining = Math.max(0, this.attackEffectRemaining - delta);
-    this.attackTrail.visible = this.attackEffectRemaining > 0;
-    if (this.attackTrail.visible) {
-      const progress = 1 - this.attackEffectRemaining / 0.2;
-      this.attackTrailMaterial.opacity = (1 - progress) * 0.62;
-      this.attackTrail.rotation.z = -0.45 + progress * 1.15;
-      this.attackTrail.scale.setScalar(1 + progress * 0.18);
+    const activeTrail = this.attackEffectRemaining > 0;
+    this.attackTrail.visible = activeTrail && this.cameraManager.mode !== 'first-person';
+    this.firstPersonAttackTrail.visible = activeTrail && this.cameraManager.mode === 'first-person';
+    if (activeTrail) {
+      const progress = 1 - this.attackEffectRemaining / 0.36;
+      this.attackTrailMaterial.opacity = (1 - progress) * 0.84;
+      this.attackTrail.rotation.z = -0.9 + progress * 1.8;
+      this.firstPersonAttackTrail.rotation.z = -0.9 + progress * 1.8;
+      this.attackTrail.scale.setScalar(0.82 + progress * 0.48);
+      this.firstPersonAttackTrail.scale.setScalar(0.82 + progress * 0.48);
     }
     const raceCameraHeight = {
       Human: { eye: 1.76, target: 1.05 },
@@ -158,12 +170,17 @@ export class Player {
     this.cameraManager.update(this.model, look.x, look.y, delta, 0.003, raceCameraHeight.eye, raceCameraHeight.target);
   }
 
-  attackAnimation(): void {
+  attackAnimation(sequence = 0): void {
+    this.attackSequence = sequence % 3;
     this.attackPending = true;
-    this.attackEffectRemaining = 0.2;
+    this.attackEffectRemaining = 0.36;
+    this.attackTrailMaterial.color.setHex([0xffd66b, 0xff9d55, 0x9fe8ff][this.attackSequence]);
     this.attackTrail.scale.setScalar(1);
-    this.attackTrail.rotation.z = -0.45;
-    this.attackTrail.visible = true;
+    this.firstPersonAttackTrail.scale.setScalar(1);
+    this.attackTrail.rotation.z = -0.9;
+    this.firstPersonAttackTrail.rotation.z = -0.9;
+    this.attackTrail.visible = this.cameraManager.mode !== 'first-person';
+    this.firstPersonAttackTrail.visible = this.cameraManager.mode === 'first-person';
   }
 
   takeDamage(amount: number): void {
@@ -186,6 +203,7 @@ export class Player {
     this.blocking = false;
     this.attackEffectRemaining = 0;
     this.attackTrail.visible = false;
+    this.firstPersonAttackTrail.visible = false;
   }
 
   get attributes(): Attributes {
@@ -193,6 +211,7 @@ export class Player {
   }
 
   dispose(): void {
+    this.camera.remove(this.firstPersonAttackTrail);
     this.physics.removeRigidBody(this.body);
     this.physics.removeCharacterController(this.controller);
     disposeActorModel(this.model);
