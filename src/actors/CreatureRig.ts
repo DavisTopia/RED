@@ -43,8 +43,10 @@ export function createCreatureRig(
   const fur = coat.clone();
   const darkCoat = makeMaterial(kind === 'wolf' ? 0x48483f : kind === 'deer' ? 0x6e4a31 : 0x30231e);
   const lightCoat = makeMaterial(kind === 'wolf' ? 0xaaa18a : kind === 'deer' ? 0xc3a77a : 0x79614b);
-  const eye = makeMaterial(0xe4c36e, 0.45);
-  const black = makeMaterial(0x171816, 0.55);
+  const eye = makeMaterial(kind === 'deer' ? 0x9a6e3d : 0x6e5134, 0.3);
+  const black = makeMaterial(0x171816, 0.28);
+  const eyeWhite = makeMaterial(0xc9bca1, 0.48);
+  const eyeGlint = new THREE.MeshBasicMaterial({ color: 0xfff0cf });
   const bodyLength = kind === 'bear' ? 1.12 : kind === 'deer' ? 0.76 : 0.86;
   const bodyHeight = kind === 'bear' ? 0.62 : kind === 'deer' ? 0.48 : 0.45;
   const shoulderHeight = kind === 'bear' ? 0.93 : kind === 'deer' ? 0.88 : 0.68;
@@ -58,6 +60,22 @@ export function createCreatureRig(
     new THREE.Vector3(0, shoulderHeight - 0.18, 0),
   );
   torso.rotation.x = Math.PI / 2;
+  for (const side of [-1, 1]) {
+    const shoulderMuscle = addMesh(
+      new THREE.SphereGeometry(kind === 'bear' ? 0.27 : 0.18, 16, 12),
+      fur,
+      rig,
+      new THREE.Vector3(side * (kind === 'bear' ? 0.19 : 0.14), shoulderHeight - 0.17, frontZ * 0.72),
+    );
+    shoulderMuscle.scale.set(0.82, 1.08, 1.22);
+    const haunch = addMesh(
+      new THREE.SphereGeometry(kind === 'bear' ? 0.25 : 0.15, 16, 12),
+      fur,
+      rig,
+      new THREE.Vector3(side * (kind === 'bear' ? 0.21 : 0.14), shoulderHeight - 0.19, rearZ * 0.72),
+    );
+    haunch.scale.set(0.82, 1.1, 1.15);
+  }
   if (kind === 'bear') {
     const hump = addMesh(new THREE.SphereGeometry(0.38, 18, 14), darkCoat, rig, new THREE.Vector3(0, shoulderHeight + 0.04, -0.02));
     hump.scale.set(1.05, 0.86, 0.82);
@@ -65,6 +83,13 @@ export function createCreatureRig(
   if (kind === 'deer') {
     const belly = addMesh(new THREE.SphereGeometry(0.29, 16, 12), lightCoat, rig, new THREE.Vector3(0, shoulderHeight - 0.28, 0.015));
     belly.scale.set(0.72, 0.69, 1.2);
+    const spot = makeMaterial(0xe0c99b);
+    for (const side of [-1, 1]) {
+      for (let row = 0; row < 3; row++) {
+        const mark = addMesh(new THREE.SphereGeometry(0.024, 8, 6), spot, rig, new THREE.Vector3(side * (0.18 - row * 0.015), shoulderHeight + 0.005, -0.18 + row * 0.15));
+        mark.scale.set(0.72, 0.45, 1.2);
+      }
+    }
   }
 
   const neck = new THREE.Bone();
@@ -92,16 +117,27 @@ export function createCreatureRig(
     new THREE.Vector3(0, -0.06, kind === 'bear' ? 0.24 : 0.22),
   );
   muzzle.rotation.x = Math.PI / 2;
-  addMesh(new THREE.SphereGeometry(0.045, 10, 8), black, head, new THREE.Vector3(0, -0.01, kind === 'bear' ? 0.42 : 0.39));
+  const nose = addMesh(new THREE.SphereGeometry(kind === 'bear' ? 0.055 : 0.036, 12, 8), black, head, new THREE.Vector3(0, 0.015, kind === 'bear' ? 0.43 : 0.39));
+  nose.scale.set(1.2, 0.72, 0.85);
+  const mouth = addMesh(new THREE.CapsuleGeometry(0.008, kind === 'bear' ? 0.095 : 0.06, 3, 6), black, head, new THREE.Vector3(0, -0.095, kind === 'bear' ? 0.31 : 0.27));
+  mouth.rotation.z = Math.PI / 2;
   for (const side of [-1, 1]) {
-    addMesh(new THREE.SphereGeometry(0.035, 10, 8), eye, head, new THREE.Vector3(side * 0.13, 0.055, 0.145));
-    addMesh(new THREE.SphereGeometry(0.016, 8, 8), black, head, new THREE.Vector3(side * 0.13, 0.055, 0.17));
+    const socket = addMesh(new THREE.SphereGeometry(0.044, 12, 10), darkCoat, head, new THREE.Vector3(side * 0.13, 0.065, 0.13));
+    socket.scale.set(1.12, 0.82, 0.72);
+    addMesh(new THREE.SphereGeometry(0.029, 12, 10), eyeWhite, head, new THREE.Vector3(side * 0.13, 0.065, 0.158));
+    addMesh(new THREE.SphereGeometry(0.019, 10, 8), eye, head, new THREE.Vector3(side * 0.13, 0.065, 0.18));
+    addMesh(new THREE.SphereGeometry(0.01, 8, 6), black, head, new THREE.Vector3(side * 0.13, 0.065, 0.194));
+    addMesh(new THREE.SphereGeometry(0.005, 8, 6), eyeGlint, head, new THREE.Vector3(side * 0.135, 0.072, 0.2));
     if (kind === 'wolf' || kind === 'deer') {
       const ear = addMesh(new THREE.ConeGeometry(kind === 'wolf' ? 0.095 : 0.075, kind === 'wolf' ? 0.27 : 0.2, 8), fur, head, new THREE.Vector3(side * 0.15, 0.2, -0.01));
       ear.rotation.z = side * -0.18;
-      if (kind === 'wolf') {
-        const inner = addMesh(new THREE.ConeGeometry(0.045, 0.15, 7), lightCoat, head, new THREE.Vector3(side * 0.15, 0.195, 0.025));
-        inner.rotation.z = side * -0.18;
+      const inner = addMesh(new THREE.ConeGeometry(kind === 'wolf' ? 0.043 : 0.03, kind === 'wolf' ? 0.14 : 0.1, 7), lightCoat, head, new THREE.Vector3(side * 0.15, 0.195, 0.035));
+      inner.rotation.z = side * -0.18;
+    }
+    if (kind === 'wolf') {
+      for (let whisker = 0; whisker < 2; whisker++) {
+        const spot = addMesh(new THREE.SphereGeometry(0.008, 6, 5), black, head, new THREE.Vector3(side * (0.075 + whisker * 0.035), -0.055 - whisker * 0.025, 0.285));
+        spot.scale.set(1, 0.7, 0.6);
       }
     }
     if (kind === 'deer') {
@@ -120,6 +156,10 @@ export function createCreatureRig(
       const ruff = addMesh(new THREE.ConeGeometry(0.09, 0.19, 7), darkCoat, rig, new THREE.Vector3((i - 2) * 0.09, shoulderHeight - 0.02, 0.25));
       ruff.rotation.x = Math.PI / 2;
       ruff.rotation.z = (i - 2) * 0.16;
+    }
+    for (let i = 0; i < 7; i++) {
+      const guardHair = addMesh(new THREE.ConeGeometry(0.045, 0.16, 6), darkCoat, rig, new THREE.Vector3((i - 3) * 0.075, shoulderHeight + 0.12, -0.12 + (i % 2) * 0.12));
+      guardHair.rotation.z = Math.PI;
     }
   }
 
@@ -154,11 +194,13 @@ export function createCreatureRig(
         new THREE.Vector3(0, -legLength * 0.48, 0.055),
       );
       foot.scale.set(0.95, 0.62, 1.25);
-      if (kind === 'bear') {
-        for (let claw = 0; claw < 3; claw++) {
-          const toe = addMesh(new THREE.ConeGeometry(0.022, 0.11, 6), black, knee, new THREE.Vector3((claw - 1) * 0.07, -legLength * 0.5, 0.14));
-          toe.rotation.x = Math.PI / 2;
-        }
+      const toeCount = kind === 'bear' ? 4 : 3;
+      for (let toe = 0; toe < toeCount; toe++) {
+        const toeX = (toe - (toeCount - 1) / 2) * (kind === 'bear' ? 0.065 : 0.045);
+        const digit = addMesh(new THREE.SphereGeometry(kind === 'bear' ? 0.045 : 0.031, 9, 7), darkCoat, knee, new THREE.Vector3(toeX, -legLength * 0.48, 0.12));
+        digit.scale.set(0.8, 0.68, 1.25);
+        const claw = addMesh(new THREE.ConeGeometry(0.014, kind === 'bear' ? 0.1 : 0.055, 6), black, knee, new THREE.Vector3(toeX, -legLength * 0.49, kind === 'bear' ? 0.18 : 0.155));
+        claw.rotation.x = Math.PI / 2;
       }
       legs.push({ hip, knee, phase: (index * 2 + row) * Math.PI, front: row === 0 });
     }
