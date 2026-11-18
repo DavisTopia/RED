@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import { AssetManager } from '../core/AssetManager';
-import { selectGraphicsConfig } from '../core/GraphicsConfig';
+import { getGraphicsConfig, selectGraphicsConfig, type GraphicsQuality } from '../core/GraphicsConfig';
 import { InputManager } from '../core/InputManager';
 import { SaveManager } from '../core/SaveManager';
 import { createCharacter, type CharacterData, type Race } from '../core/types';
@@ -32,7 +32,7 @@ interface PendingAttack {
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly camera = new THREE.PerspectiveCamera(68, 1, 0.1, 180);
-  private readonly graphics = selectGraphicsConfig();
+  private graphics = selectGraphicsConfig();
   private readonly assets: AssetManager;
   private readonly saves = new SaveManager();
   private readonly input: InputManager;
@@ -93,6 +93,7 @@ export class Game {
       spirit: () => { this.input.spiritPressed = true; },
       camera: () => { this.input.cameraPressed = true; },
       toggleInventory: () => this.toggleInventory(),
+      setGraphicsQuality: (quality) => this.setGraphicsQuality(quality),
       setBlocking: (blocked) => { this.blockTouch = blocked; },
       setSprinting: (sprinting) => { this.sprintTouch = sprinting; },
     });
@@ -269,6 +270,7 @@ export class Game {
       companion: creatures.companion,
       spiritActive: creatures.spiritActive,
       spiritCooldown: creatures.spiritRemainingCooldown,
+      graphicsQuality: this.graphics.quality,
       landmarks: this.world.landmarks.map(({ name, position }) => ({
         name,
         x: position.x,
@@ -523,6 +525,18 @@ export class Game {
   private toggleInventory(): void {
     this.ui.toggleInventory();
     this.input.inventoryPressed = false;
+  }
+
+  private setGraphicsQuality(quality: GraphicsQuality): void {
+    this.graphics = getGraphicsConfig(quality);
+    this.renderer.shadowMap.enabled = this.graphics.shadows;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.graphics.maxPixelRatio));
+    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    this.assets.setTextureAnisotropy(
+      Math.min(this.graphics.textureAnisotropy, this.renderer.capabilities.getMaxAnisotropy()),
+    );
+    this.world.setGraphicsConfig(this.graphics);
+    this.ui.toastMessage(`Graphics quality · ${quality.toUpperCase()}`);
   }
 
   private async persist(): Promise<void> {

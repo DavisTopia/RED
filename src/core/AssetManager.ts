@@ -46,13 +46,26 @@ export class AssetManager {
   private readonly textureCache = new Map<string, Promise<THREE.Texture>>();
   private readonly loadedMaterials = new Set<THREE.Material>();
   private disposed = false;
+  private maxAnisotropy: number;
 
   constructor(
-    private readonly maxAnisotropy = 1,
+    maxAnisotropy = 1,
     private readonly reportError: (message: string, error: unknown) => void = (message, error) => {
       console.error(message, error);
     },
-  ) {}
+  ) {
+    this.maxAnisotropy = maxAnisotropy;
+  }
+
+  setTextureAnisotropy(value: number): void {
+    if (this.disposed) return;
+    this.maxAnisotropy = Math.max(1, value);
+    for (const request of this.textureCache.values()) {
+      void request.then((texture) => {
+        texture.anisotropy = this.maxAnisotropy;
+      }, () => undefined);
+    }
+  }
 
   async loadModel(
     assetPath: string,

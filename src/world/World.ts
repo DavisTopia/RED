@@ -45,6 +45,10 @@ export class World {
     this.environment.startAmbience();
   }
 
+  setGraphicsConfig(graphics: GraphicsConfig): void {
+    this.environment.setGraphicsConfig(graphics);
+  }
+
   dispose(): void {
     this.environment.dispose();
   }

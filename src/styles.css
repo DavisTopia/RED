@@ -240,9 +240,12 @@ button { color: inherit; }
 .map-pin.discovered { color: #e0c47a; }
 .settings-list { display: grid; }
 .settings-list > div { display: flex; min-height: 43px; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(218, 204, 169, .13); }
+.graphics-setting { display: flex; min-height: 43px; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(218, 204, 169, .13); }
 .settings-list span { color: #c4aa6b; font-size: 8px; font-weight: 700; letter-spacing: .12em; }
 .settings-list b { color: #e1dfd4; font-size: 9px; font-weight: 500; text-align: right; }
 .settings-list button { padding: 7px 10px; border: 1px solid rgba(218, 204, 169, .23); background: rgba(5, 11, 7, .35); color: #eee5d3; font-size: 9px; cursor: pointer; }
+.graphics-setting select { min-width: 116px; padding: 7px 9px; border: 1px solid rgba(218, 204, 169, .23); background: #18251c; color: #eee5d3; font-size: 9px; cursor: pointer; }
+.graphics-setting select:focus-visible { outline: 2px solid #e3c77d; outline-offset: 2px; }
 
 .touch-controls { display: none; }
 .fatal-error { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; padding: 20px; background: #17251c; text-align: center; pointer-events: auto; }

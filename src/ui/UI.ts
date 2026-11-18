@@ -1,4 +1,5 @@
 import type { Creature } from '../creatures/Creature';
+import { isGraphicsQuality, type GraphicsQuality } from '../core/GraphicsConfig';
 import { RACE_ATTRIBUTES, type CharacterData, type Race } from '../core/types';
 
 export interface UIActions {
@@ -11,6 +12,7 @@ export interface UIActions {
   spirit: () => void;
   camera: () => void;
   toggleInventory: () => void;
+  setGraphicsQuality: (quality: GraphicsQuality) => void;
   setBlocking: (blocked: boolean) => void;
   setSprinting: (sprinting: boolean) => void;
 }
@@ -34,6 +36,7 @@ interface GameUIState {
   companion: Creature | null;
   spiritActive: boolean;
   spiritCooldown: number;
+  graphicsQuality: GraphicsQuality;
   landmarks: LandmarkStatus[];
 }
 
@@ -61,8 +64,10 @@ export class UI {
   private panelTrigger: HTMLElement | null = null;
   private panelSnapshot = '';
   private menuTransitionTimeout = 0;
+  private graphicsQuality: GraphicsQuality = 'high';
   private readonly buttons = new Map<string, HTMLButtonElement[]>();
   private readonly onRootClick = (event: MouseEvent): void => this.handleClick(event);
+  private readonly onRootChange = (event: Event): void => this.handleChange(event);
   private readonly onRootPointerDown = (event: PointerEvent): void => this.handlePointerDown(event);
   private readonly onGlobalPointerEnd = (): void => {
     this.actions.setBlocking(false);
@@ -99,6 +104,7 @@ export class UI {
     this.renderMenu(null);
     this.menu.classList.add('hidden');
     this.root.addEventListener('click', this.onRootClick);
+    this.root.addEventListener('change', this.onRootChange);
     this.root.addEventListener('pointerdown', this.onRootPointerDown);
     window.addEventListener('pointerup', this.onGlobalPointerEnd);
     window.addEventListener('pointercancel', this.onGlobalPointerEnd);
@@ -110,6 +116,7 @@ export class UI {
     window.clearTimeout(this.panelCloseTimeout);
     window.clearTimeout(this.menuTransitionTimeout);
     this.root.removeEventListener('click', this.onRootClick);
+    this.root.removeEventListener('change', this.onRootChange);
     this.root.removeEventListener('pointerdown', this.onRootPointerDown);
     window.removeEventListener('pointerup', this.onGlobalPointerEnd);
     window.removeEventListener('pointercancel', this.onGlobalPointerEnd);
@@ -214,6 +221,7 @@ export class UI {
       this.openPanel(panelTab.dataset.panelSelect as GamePanelName);
       return;
     }
+
     const panelTrigger = target.closest<HTMLButtonElement>('[data-open-panel]');
     if (panelTrigger) {
       this.openPanel(panelTrigger.dataset.openPanel as GamePanelName, panelTrigger);
@@ -272,6 +280,16 @@ export class UI {
         this.closePanel();
         break;
     }
+  }
+
+  private handleChange(event: Event): void {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || target.id !== 'graphics-quality') return;
+    if (!isGraphicsQuality(target.value)) {
+      target.value = this.graphicsQuality;
+      return;
+    }
+    this.actions.setGraphicsQuality(target.value);
   }
 
   private handlePointerDown(event: PointerEvent): void {
@@ -372,10 +390,12 @@ export class UI {
     companion: Creature | null;
     spiritActive: boolean;
     spiritCooldown: number;
+    graphicsQuality: GraphicsQuality;
     landmarks: LandmarkStatus[];
   }): void {
     this.currentCharacter = data.character;
     this.latestUpdate = data;
+    this.graphicsQuality = data.graphicsQuality;
     const setText = (selector: string, value: string): void => {
       const element = this.hud.querySelector<HTMLElement>(selector);
       if (element) element.textContent = value;
@@ -484,7 +504,9 @@ export class UI {
           ? [update?.landmarks.map(({ name, discovered }) => [name, discovered])]
           : this.activePanel === 'companion'
             ? [update?.companion ? [update.companion.kind, update.companion.health] : null]
-            : [];
+            : this.activePanel === 'settings'
+              ? [update?.graphicsQuality]
+              : [];
     const snapshot = JSON.stringify([
       character.level,
       character.xp,
@@ -565,6 +587,14 @@ export class UI {
           <div><span>COMBAT</span><b>CLICK / ATTACK · E / USE</b></div>
           <div><span>SPIRIT</span><b>Q / SPIRIT · I / PACK</b></div>
           <div><span>CAMERA</span><button type="button" data-action="camera">SWITCH VIEW · V</button></div>
+          <label class="graphics-setting" for="graphics-quality"><span>GRAPHICS QUALITY</span>
+            <select id="graphics-quality" name="graphics-quality">
+              ${(['low', 'medium', 'high', 'ultra'] as GraphicsQuality[]).map((quality) => `
+                <option value="${quality}" ${quality === this.graphicsQuality ? 'selected' : ''}>${quality.toUpperCase()}</option>
+              `).join('')}
+            </select>
+          </label>
+          <p class="panel-note">Quality changes apply immediately. Anti-aliasing follows the device profile chosen at startup.</p>
           <div><span>SAVE</span><b>LOCAL · AUTOMATIC</b></div>
         </div>
       `,

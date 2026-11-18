@@ -53,13 +53,14 @@ export class WorldEnvironment {
   private terrainTexture!: THREE.DataTexture;
   private particles!: THREE.Points;
   private sun!: THREE.DirectionalLight;
+  private hemisphere!: THREE.HemisphereLight;
   private elapsed = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
     private readonly assets: AssetManager,
     private readonly physics: RAPIER.World,
-    private readonly graphics: GraphicsConfig,
+    private graphics: GraphicsConfig,
     private readonly anchors: THREE.Vector3[],
   ) {
     this.riverCurve = new THREE.CatmullRomCurve3([
@@ -166,6 +167,17 @@ export class WorldEnvironment {
 
   startAmbience(): void {
     this.audio.start();
+  }
+
+  setGraphicsConfig(graphics: GraphicsConfig): void {
+    this.graphics = graphics;
+    this.hemisphere.intensity = graphics.hemisphereLightIntensity;
+    this.sun.castShadow = graphics.shadows;
+    this.sun.shadow.mapSize.set(graphics.shadowMapSize, graphics.shadowMapSize);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
+    this.sun.shadow.needsUpdate = true;
+    this.terrainTexture.anisotropy = graphics.textureAnisotropy;
   }
 
   private buildTerrain(): void {
@@ -1022,12 +1034,12 @@ export class WorldEnvironment {
   }
 
   private buildLighting(): void {
-    const hemisphere = new THREE.HemisphereLight(
+    this.hemisphere = new THREE.HemisphereLight(
       0xc8dcf5,
       0x493a36,
       this.graphics.hemisphereLightIntensity,
     );
-    this.scene.add(hemisphere);
+    this.scene.add(this.hemisphere);
     this.sun = new THREE.DirectionalLight(0xffd5a1, this.graphics.directionalLightIntensity);
     this.sun.position.set(-28, 52, 25);
     this.sun.castShadow = this.graphics.shadows;
