@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import { AssetManager } from '../core/AssetManager';
+import { selectGraphicsConfig } from '../core/GraphicsConfig';
 import { InputManager } from '../core/InputManager';
 import { SaveManager } from '../core/SaveManager';
 import { createCharacter, type CharacterData, type Race } from '../core/types';
 import { CreatureSystem } from '../creatures/CreatureSystem';
 import type { Creature } from '../creatures/Creature';
+import { createCharacterRig, type CharacterRig } from '../actors/CharacterRig';
+import { disposeActorModel } from '../actors/ActorGeometry';
 import { Player } from '../player/Player';
 import { World } from '../world/World';
 import { UI } from '../ui/UI';
@@ -13,13 +16,17 @@ import { UI } from '../ui/UI';
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly camera = new THREE.PerspectiveCamera(68, 1, 0.1, 180);
-  private readonly assets = new AssetManager();
+  private readonly graphics = selectGraphicsConfig();
+  private readonly assets: AssetManager;
   private readonly saves = new SaveManager();
   private readonly input: InputManager;
   private readonly ui: UI;
   private physics!: RAPIER.World;
   private world!: World;
   private player: Player | null = null;
+  private menuPreview: CharacterRig | null = null;
+  private menuPreviewElapsed = 0;
+  private menuPreviewScale = 1;
   private creatures: CreatureSystem | null = null;
   private savedCharacter: CharacterData | null = null;
   private playing = false;
@@ -28,22 +35,37 @@ export class Game {
   private attackCooldown = 0;
   private respawnTimer = 0;
   private autoSaveTimer = 0;
+  private deathTimeout = 0;
   private sprintTouch = false;
   private blockTouch = false;
   private promptText = '';
   private readonly lootDrops: Array<{ mesh: THREE.Mesh; item: string }> = [];
+  private readonly onCanvasPointerDown = (event: PointerEvent): void => {
+    if (event.pointerType === 'mouse' && event.button === 0 && this.playing) {
+      this.input.attackPressed = true;
+    }
+  };
+  private readonly onCanvasContextMenu = (event: MouseEvent): void => { event.preventDefault(); };
 
   constructor(private readonly canvas: HTMLCanvasElement, root: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.shadowMap.enabled = !window.matchMedia('(pointer: coarse)').matches;
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: this.graphics.antialias,
+      powerPreference: 'high-performance',
+    });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.graphics.maxPixelRatio));
+    this.renderer.shadowMap.enabled = this.graphics.shadows;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = this.graphics.toneMappingExposure;
+    this.assets = new AssetManager(
+      Math.min(this.graphics.textureAnisotropy, this.renderer.capabilities.getMaxAnisotropy()),
+    );
     this.input = new InputManager(root, canvas);
     this.ui = new UI(root, {
       start: (race, name) => this.startNewCharacter(race, name),
+      preview: (race) => this.showMenuPreview(race),
       continue: () => this.continueCharacter(),
       attack: () => { this.input.attackPressed = true; },
       jump: () => { this.input.jumpPressed = true; },
@@ -54,25 +76,29 @@ export class Game {
       setBlocking: (blocked) => { this.blockTouch = blocked; },
       setSprinting: (sprinting) => { this.sprintTouch = sprinting; },
     });
-    this.canvas.addEventListener('pointerdown', (event) => {
-      if (event.pointerType === 'mouse' && event.button === 0 && this.playing) {
-        this.input.attackPressed = true;
-      }
-    });
-    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    this.canvas.addEventListener('pointerdown', this.onCanvasPointerDown);
+    this.canvas.addEventListener('contextmenu', this.onCanvasContextMenu);
     window.addEventListener('resize', this.resize);
     this.resize();
   }
 
   async start(): Promise<void> {
     await RAPIER.init();
+    if (this.disposed) return;
     this.physics = new RAPIER.World({ x: 0, y: -19.6, z: 0 });
     this.physics.timestep = 1 / 60;
-    this.world = new World(this.assets, this.physics);
-    this.camera.position.set(0, 5, 20);
-    this.camera.lookAt(0, 0, 0);
+    this.world = new World(this.assets, this.physics, this.graphics);
+    this.positionMenuCamera();
     await this.saves.open();
+    if (this.disposed) {
+      this.saves.close();
+      return;
+    }
     this.savedCharacter = await this.saves.load();
+    if (this.disposed) {
+      this.saves.close();
+      return;
+    }
     this.ui.showSavedCharacter(this.savedCharacter);
     this.renderer.setAnimationLoop(this.frame);
   }
@@ -86,12 +112,27 @@ export class Game {
   }
 
   private launchCharacter(character: CharacterData): void {
+    window.clearTimeout(this.deathTimeout);
+    this.deathTimeout = 0;
     if (this.playing) this.disposeActors();
+    this.disposeMenuPreview();
     this.clearLootDrops();
     this.savedCharacter = character;
-    this.player = new Player(this.physics, this.camera, character);
+    this.player = new Player(
+      this.physics,
+      this.camera,
+      character,
+      (x, z) => this.world.getSurfaceHeight(x, z),
+    );
     this.world.scene.add(this.player.model);
-    this.creatures = new CreatureSystem(this.world.scene, this.physics, this.assets, character);
+    this.creatures = new CreatureSystem(
+      this.world.scene,
+      this.physics,
+      this.assets,
+      character,
+      (x, z) => this.world.getSurfaceHeight(x, z),
+    );
+    this.world.startAmbience();
     this.playing = true;
     this.ui.startGame(character);
     this.ui.toastMessage(`Welcome to the valley, ${character.name}.`);
@@ -104,9 +145,52 @@ export class Game {
     const delta = Math.min(rawDelta, 0.05);
     this.lastFrame = time;
     this.physics.timestep = Math.max(delta, 1 / 120);
+    this.world.update(delta);
     if (this.playing && this.player && this.creatures) this.updateGame(delta);
+    else this.updateMenuPreview(delta);
     this.renderer.render(this.world.scene, this.camera);
   };
+
+  private showMenuPreview(race: Race): void {
+    if (this.menuPreview) {
+      this.world.scene.remove(this.menuPreview.model);
+      disposeActorModel(this.menuPreview.model);
+    }
+    this.menuPreview = createCharacterRig(race);
+    this.menuPreview.model.position.set(4.2, this.world.getSurfaceHeight(4.2, 8), 8);
+    this.menuPreview.model.rotation.y = 0;
+    this.menuPreview.model.scale.setScalar(0.82);
+    this.world.scene.add(this.menuPreview.model);
+    this.menuPreviewElapsed = 0;
+    this.menuPreviewScale = 0;
+    this.positionMenuCamera();
+  }
+
+  private updateMenuPreview(delta: number): void {
+    if (!this.menuPreview) return;
+    this.menuPreviewElapsed += delta;
+    this.menuPreviewScale = Math.min(1, this.menuPreviewScale + delta * 3.6);
+    this.menuPreview.model.scale.setScalar(0.82 + this.menuPreviewScale * 0.18);
+    this.menuPreview.model.rotation.y = Math.sin(this.menuPreviewElapsed * 0.45) * 0.09;
+    this.menuPreview.update(delta, 0, false, false, false, false, false, false);
+  }
+
+  private positionMenuCamera(): void {
+    const mobile = window.matchMedia('(max-width: 760px), (pointer: coarse)').matches;
+    if (mobile) {
+      this.camera.position.set(0, 3.4, 19);
+      this.camera.lookAt(0, 1.4, 7);
+      if (this.menuPreview) {
+        this.menuPreview.model.position.set(0, this.world.getSurfaceHeight(0, 7), 7);
+      }
+      return;
+    }
+    this.camera.position.set(0, 3.8, 20);
+    this.camera.lookAt(0, 1.4, 5);
+    if (this.menuPreview) {
+      this.menuPreview.model.position.set(4.2, this.world.getSurfaceHeight(4.2, 8), 8);
+    }
+  }
 
   private updateGame(delta: number): void {
     const player = this.player!;
@@ -160,6 +244,12 @@ export class Game {
       companion: creatures.companion,
       spiritActive: creatures.spiritActive,
       spiritCooldown: creatures.spiritRemainingCooldown,
+      landmarks: this.world.landmarks.map(({ name, position }) => ({
+        name,
+        x: position.x,
+        z: position.z,
+        discovered: player.character.discoveredLocations.includes(name),
+      })),
     });
     if (this.autoSaveTimer > 20) {
       this.autoSaveTimer = 0;
@@ -200,6 +290,7 @@ export class Game {
       const [drop] = this.lootDrops.splice(dropIndex, 1);
       player.character.inventory.push(drop.item);
       this.world.scene.remove(drop.mesh);
+      this.disposeLootDrop(drop.mesh);
       this.ui.toastMessage(`${drop.item} added to your pack.`);
       void this.persist();
       return;
@@ -284,7 +375,9 @@ export class Game {
     this.respawnTimer = 3;
     this.player!.health = 0;
     this.ui.toastMessage('You have fallen · returning to the valley in 3 seconds.');
-    window.setTimeout(() => {
+    window.clearTimeout(this.deathTimeout);
+    this.deathTimeout = window.setTimeout(() => {
+      this.deathTimeout = 0;
       if (!this.playing || !this.player) return;
       this.player.restore();
       this.ui.toastMessage('You awaken at the valley entrance.');
@@ -332,7 +425,7 @@ export class Game {
       await this.saves.save(this.player.character);
     } catch (error) {
       console.error('Could not save RED progress.', error);
-      this.ui.toastMessage('Save failed · check browser storage permissions.');
+      if (!this.disposed) this.ui.toastMessage('Save failed · check browser storage permissions.');
     }
   }
 
@@ -347,8 +440,24 @@ export class Game {
   }
 
   private clearLootDrops(): void {
-    for (const drop of this.lootDrops) this.world.scene.remove(drop.mesh);
+    for (const drop of this.lootDrops) {
+      this.world.scene.remove(drop.mesh);
+      this.disposeLootDrop(drop.mesh);
+    }
     this.lootDrops.length = 0;
+  }
+
+  private disposeLootDrop(mesh: THREE.Mesh): void {
+    mesh.geometry.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) material.dispose();
+  }
+
+  private disposeMenuPreview(): void {
+    if (!this.menuPreview) return;
+    this.world.scene.remove(this.menuPreview.model);
+    disposeActorModel(this.menuPreview.model);
+    this.menuPreview = null;
   }
 
   private resize = (): void => {
@@ -357,15 +466,25 @@ export class Game {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    if (!this.playing && this.world) this.positionMenuCamera();
   };
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    window.clearTimeout(this.deathTimeout);
+    window.removeEventListener('resize', this.resize);
+    this.canvas.removeEventListener('pointerdown', this.onCanvasPointerDown);
+    this.canvas.removeEventListener('contextmenu', this.onCanvasContextMenu);
     this.renderer.setAnimationLoop(null);
     this.disposeActors();
+    this.disposeMenuPreview();
     this.clearLootDrops();
     this.world?.dispose();
+    this.assets.dispose();
     this.input.dispose();
+    this.ui.dispose();
+    this.saves.close();
     this.renderer.dispose();
     this.physics?.free();
   }

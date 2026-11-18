@@ -7,6 +7,8 @@ import { Creature } from './Creature';
 export class CreatureSystem {
   readonly creatures: Creature[] = [];
   private spirit: THREE.Group | null = null;
+  private spiritAura: THREE.Points | null = null;
+  private spiritAuraMaterial: THREE.PointsMaterial | null = null;
   private spiritCooldown = 0;
   private spiritAttackTimer = 0;
   private spiritLife = 0;
@@ -18,6 +20,7 @@ export class CreatureSystem {
     private readonly physics: RAPIER.World,
     private readonly assets: AssetManager,
     character: CharacterData,
+    private readonly surfaceHeightAt: (x: number, z: number) => number = () => 0,
   ) {
     this.spawn('wolf', new THREE.Vector3(-8, 0, 3));
     this.spawn('wolf', new THREE.Vector3(10, 0, -16));
@@ -33,7 +36,7 @@ export class CreatureSystem {
   }
 
   private spawn(kind: 'wolf' | 'deer' | 'bear', position: THREE.Vector3): Creature {
-    const creature = new Creature(kind, position, this.physics, this.assets);
+    const creature = new Creature(kind, position, this.physics, this.assets, this.surfaceHeightAt);
     this.creatures.push(creature);
     this.scene.add(creature.model);
     return creature;
@@ -66,12 +69,26 @@ export class CreatureSystem {
         this.companion.attackCooldown = 1;
       }
       if (distance > 20) {
-        this.companion.body.setTranslation({ x: playerPosition.x - 1, y: 0.62, z: playerPosition.z - 1 }, true);
+        this.companion.body.setTranslation({
+          x: playerPosition.x - 1,
+          y: this.companion.groundHeightAt(playerPosition.x - 1, playerPosition.z - 1),
+          z: playerPosition.z - 1,
+        }, true);
       }
     }
     if (this.spirit) {
       this.spiritLife -= delta;
-      this.spirit.position.set(playerPosition.x + Math.sin(this.spiritLife * 1.4) * 0.8, 0.55, playerPosition.z - 1.1);
+      const spiritX = playerPosition.x + Math.sin(this.spiritLife * 1.4) * 0.8;
+      const spiritZ = playerPosition.z - 1.1;
+      const spiritTime = 18 - this.spiritLife;
+      this.spirit.position.set(
+        spiritX,
+        this.surfaceHeightAt(spiritX, spiritZ) + 0.55 + Math.sin(spiritTime * 2.4) * 0.07,
+        spiritZ,
+      );
+      this.spirit.rotation.y += delta * 0.45;
+      if (this.spiritAuraMaterial) this.spiritAuraMaterial.opacity = 0.38 + Math.sin(spiritTime * 3.2) * 0.12;
+      this.spiritAura?.scale.setScalar(1 + Math.sin(spiritTime * 3.2) * 0.12);
       const target = this.creatures.find((creature) =>
         (creature.kind === 'wolf' || creature.kind === 'bear')
         && creature.mood !== 'dead' && creature.mood !== 'tamed'
@@ -111,7 +128,31 @@ export class CreatureSystem {
       ear.position.set(side * 0.17, 1.08, 0.48);
       this.spirit.add(ear);
     }
-    this.spirit.position.set(playerPosition.x, 0.55, playerPosition.z - 1);
+    const auraPositions = new Float32Array(20 * 3);
+    for (let i = 0; i < 20; i++) {
+      const angle = (i / 20) * Math.PI * 2;
+      auraPositions[i * 3] = Math.cos(angle) * 0.62;
+      auraPositions[i * 3 + 1] = 0.42 + Math.sin(i * 2.7) * 0.48;
+      auraPositions[i * 3 + 2] = Math.sin(angle) * 0.52;
+    }
+    const auraGeometry = new THREE.BufferGeometry();
+    auraGeometry.setAttribute('position', new THREE.BufferAttribute(auraPositions, 3));
+    this.spiritAuraMaterial = new THREE.PointsMaterial({
+      color: 0x9ce8d7,
+      size: 0.09,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.spiritAura = new THREE.Points(auraGeometry, this.spiritAuraMaterial);
+    this.spiritAura.frustumCulled = false;
+    this.spirit.add(this.spiritAura);
+    this.spirit.position.set(
+      playerPosition.x,
+      this.surfaceHeightAt(playerPosition.x, playerPosition.z - 1) + 0.55,
+      playerPosition.z - 1,
+    );
     this.scene.add(this.spirit);
     this.spiritCooldown = 35;
     this.spiritLife = 18;
@@ -119,8 +160,15 @@ export class CreatureSystem {
   }
 
   dismissSpirit(): void {
-    if (this.spirit) this.scene.remove(this.spirit);
+    if (!this.spirit) return;
+    this.scene.remove(this.spirit);
+    this.spirit.traverse((object) => {
+      if (object instanceof THREE.Mesh || object instanceof THREE.Points) object.geometry.dispose();
+    });
+    this.spiritAuraMaterial?.dispose();
     this.spirit = null;
+    this.spiritAura = null;
+    this.spiritAuraMaterial = null;
   }
 
   get spiritActive(): boolean {

@@ -26,6 +26,11 @@ export class SaveManager {
     });
   }
 
+  close(): void {
+    this.database?.close();
+    this.database = null;
+  }
+
   async load(): Promise<CharacterData | null> {
     const db = this.requireDatabase();
     const saved = await this.request<SaveRecord | undefined>(

@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import * as RAPIER from '@dimforge/rapier3d-compat';
 import type { Attributes, CharacterData } from '../core/types';
 import { CameraManager } from './CameraManager';
+import { createCharacterRig, type CharacterRig } from '../actors/CharacterRig';
+import { disposeActorModel } from '../actors/ActorGeometry';
 
 export class Player {
   readonly model = new THREE.Group();
@@ -13,27 +15,37 @@ export class Player {
   mana: number;
   blocking = false;
   private verticalSpeed = 0;
-  private walkTime = 0;
-  private attackTimer = 0;
-  private leftLeg!: THREE.Group;
-  private rightLeg!: THREE.Group;
-  private leftArm!: THREE.Group;
-  private rightArm!: THREE.Group;
+  private attackPending = false;
+  private damagePending = false;
+  private readonly capsuleRadius: number;
+  private readonly capsuleHalfHeight: number;
+  private visualRig!: CharacterRig;
+  private attackTrail!: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+  private attackTrailMaterial!: THREE.MeshBasicMaterial;
+  private attackEffectRemaining = 0;
 
   constructor(
     private readonly physics: RAPIER.World,
     camera: THREE.PerspectiveCamera,
     readonly character: CharacterData,
+    private readonly groundHeightAt: (x: number, z: number) => number = () => 0,
   ) {
     this.health = character.attributes.health;
     this.stamina = character.attributes.stamina;
     this.mana = character.attributes.mana;
     this.cameraManager = new CameraManager(camera);
+    this.capsuleRadius = character.race === 'Dwarf' ? 0.33 : character.race === 'Elf' ? 0.36 : 0.38;
+    this.capsuleHalfHeight = character.race === 'Dwarf' ? 0.37 : character.race === 'Elf' ? 0.57 : 0.52;
+    const bodyHeight = this.capsuleHalfHeight + this.capsuleRadius;
     this.body = physics.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 0.9, 13),
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
+        0,
+        this.groundHeightAt(0, 13) + bodyHeight,
+        13,
+      ),
     );
     this.collider = physics.createCollider(
-      RAPIER.ColliderDesc.capsule(0.52, 0.38).setFriction(0),
+      RAPIER.ColliderDesc.capsule(this.capsuleHalfHeight, this.capsuleRadius).setFriction(0),
       this.body,
     );
     const controller = physics.createCharacterController(0.04);
@@ -46,57 +58,27 @@ export class Player {
   private readonly controller: RAPIER.KinematicCharacterController;
 
   private createModel(): void {
-    const skin = new THREE.MeshStandardMaterial({ color: this.character.race === 'Elf' ? 0xb98d72 : 0xb77e58, roughness: 0.85 });
-    const cloth = new THREE.MeshStandardMaterial({
-      color: this.character.race === 'Dwarf' ? 0x68434a : this.character.race === 'Beastkin' ? 0x635d38 : 0x40584b,
-      roughness: 0.9,
+    this.visualRig = createCharacterRig(this.character.race);
+    this.model.add(this.visualRig.model);
+    this.attackTrailMaterial = new THREE.MeshBasicMaterial({
+      color: 0xe7ca82,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     });
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 0.66, 4, 8), cloth);
-    torso.position.y = 1.12;
-    torso.castShadow = true;
-    this.model.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.23, 12, 10), skin);
-    head.position.y = 1.77;
-    head.castShadow = true;
-    this.model.add(head);
-    if (this.character.race === 'Elf') {
-      for (const side of [-1, 1]) {
-        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.28, 4), skin);
-        ear.position.set(side * 0.25, 1.82, 0);
-        ear.rotation.z = side * Math.PI / 2;
-        this.model.add(ear);
-      }
-    }
-    if (this.character.race === 'Dwarf') {
-      const beard = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.28, 5), cloth);
-      beard.position.set(0, 1.55, 0.15);
-      this.model.add(beard);
-    }
-    this.leftLeg = this.makeLimb(cloth, -0.16, 0.62, 0.58);
-    this.rightLeg = this.makeLimb(cloth, 0.16, 0.62, 0.58);
-    this.leftArm = this.makeLimb(skin, -0.39, 1.23, 0.48);
-    this.rightArm = this.makeLimb(skin, 0.39, 1.23, 0.48);
-    const sword = new THREE.Mesh(
-      new THREE.BoxGeometry(0.07, 0.74, 0.045),
-      new THREE.MeshStandardMaterial({ color: 0xc3c7b9, metalness: 0.68, roughness: 0.32 }),
+    this.attackTrail = new THREE.Mesh(
+      new THREE.TorusGeometry(0.52, 0.018, 5, 18, Math.PI * 0.78),
+      this.attackTrailMaterial,
     );
-    sword.position.set(0, -0.33, 0.04);
-    this.rightArm.add(sword);
-    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.07, 0.08), new THREE.MeshStandardMaterial({ color: 0x947b48 }));
-    guard.position.y = -0.62;
-    this.rightArm.add(guard);
-    this.model.position.set(0, 0, 13);
-  }
-
-  private makeLimb(material: THREE.Material, x: number, y: number, length: number): THREE.Group {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, y, 0);
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.105, length, 3, 6), material);
-    mesh.position.y = -length * 0.35;
-    mesh.castShadow = true;
-    pivot.add(mesh);
-    this.model.add(pivot);
-    return pivot;
+    this.attackTrail.position.set(0, -0.45, 0.08);
+    this.attackTrail.rotation.z = -0.45;
+    this.attackTrail.visible = false;
+    this.attackTrail.castShadow = false;
+    this.attackTrail.receiveShadow = false;
+    const weaponSocket = this.visualRig.model.getObjectByName('WeaponSocket') ?? this.visualRig.model;
+    weaponSocket.add(this.attackTrail);
+    this.model.position.set(0, this.groundHeightAt(0, 13), 13);
   }
 
   update(
@@ -113,7 +95,7 @@ export class Player {
     const direction = forward.multiplyScalar(-move.y).add(right.multiplyScalar(move.x));
     if (direction.lengthSq() > 0) direction.normalize();
 
-    const wantsSprint = sprinting && move.y !== 0 || sprinting && move.x !== 0;
+    const wantsSprint = sprinting && (move.y !== 0 || move.x !== 0);
     const canSprint = wantsSprint && this.stamina > 0;
     const speed = canSprint ? 7.5 : 4.5;
     if (canSprint) this.stamina = Math.max(0, this.stamina - delta * 16);
@@ -133,41 +115,77 @@ export class Player {
     };
     this.controller.computeColliderMovement(this.collider, desired);
     const movement = this.controller.computedMovement();
+    const bodyHeight = this.capsuleHalfHeight + this.capsuleRadius;
+    const nextX = position.x + movement.x;
+    const nextZ = position.z + movement.z;
+    const groundHeight = this.groundHeightAt(nextX, nextZ);
     this.body.setNextKinematicTranslation({
-      x: position.x + movement.x,
-      y: Math.max(-0.2, position.y + movement.y),
-      z: position.z + movement.z,
+      x: nextX,
+      y: Math.max(groundHeight + bodyHeight - 0.05, position.y + movement.y),
+      z: nextZ,
     });
-    this.model.position.set(position.x + movement.x, position.y + movement.y - 0.9, position.z + movement.z);
+    this.model.position.set(nextX, Math.max(groundHeight, position.y + movement.y - bodyHeight), nextZ);
 
     this.blocking = this.blocking && this.stamina > 0;
     if (this.blocking) this.stamina = Math.max(0, this.stamina - delta * 7);
     const moving = direction.lengthSq() > 0.01;
-    this.walkTime += delta * (canSprint ? 12 : 8) * (moving ? 1 : 0.2);
-    const swing = moving ? Math.sin(this.walkTime) * 0.48 : 0;
-    this.leftLeg.rotation.x = swing;
-    this.rightLeg.rotation.x = -swing;
-    this.leftArm.rotation.x = -swing * 0.7;
-    this.rightArm.rotation.x = this.attackTimer > 0 ? -1.7 : swing * 0.55;
-    this.attackTimer = Math.max(0, this.attackTimer - delta);
-    this.cameraManager.update(this.model, look.x, look.y);
+    this.visualRig.update(
+      delta,
+      moving ? 1 : 0,
+      canSprint,
+      this.attackPending,
+      this.damagePending,
+      this.health <= 0,
+      this.blocking,
+      !this.controller.computedGrounded(),
+    );
+    this.attackPending = false;
+    this.damagePending = false;
+    this.attackEffectRemaining = Math.max(0, this.attackEffectRemaining - delta);
+    this.attackTrail.visible = this.attackEffectRemaining > 0;
+    if (this.attackTrail.visible) {
+      const progress = 1 - this.attackEffectRemaining / 0.2;
+      this.attackTrailMaterial.opacity = (1 - progress) * 0.62;
+      this.attackTrail.rotation.z = -0.45 + progress * 1.15;
+      this.attackTrail.scale.setScalar(1 + progress * 0.18);
+    }
+    const raceCameraHeight = {
+      Human: { eye: 1.76, target: 1.05 },
+      Elf: { eye: 1.9, target: 1.15 },
+      Dwarf: { eye: 1.38, target: 0.82 },
+      Beastkin: { eye: 1.79, target: 1.05 },
+    }[this.character.race];
+    this.cameraManager.update(this.model, look.x, look.y, delta, 0.003, raceCameraHeight.eye, raceCameraHeight.target);
   }
 
   attackAnimation(): void {
-    this.attackTimer = 0.28;
+    this.attackPending = true;
+    this.attackEffectRemaining = 0.2;
+    this.attackTrail.scale.setScalar(1);
+    this.attackTrail.rotation.z = -0.45;
+    this.attackTrail.visible = true;
   }
 
   takeDamage(amount: number): void {
     const mitigation = Math.max(0, this.character.attributes.defense * 0.018);
-    this.health = Math.max(0, this.health - Math.max(1, amount * (this.blocking ? 0.3 : 1) * (1 - mitigation)));
+    const damage = Math.max(1, amount * (this.blocking ? 0.3 : 1) * (1 - mitigation));
+    this.health = Math.max(0, this.health - damage);
+    this.damagePending = true;
   }
 
   restore(): void {
     this.health = this.character.attributes.health;
     this.stamina = this.character.attributes.stamina;
     this.mana = this.character.attributes.mana;
-    this.body.setTranslation({ x: 0, y: 0.9, z: 13 }, true);
+    this.model.rotation.z = 0;
+    const bodyHeight = this.capsuleHalfHeight + this.capsuleRadius;
+    const groundHeight = this.groundHeightAt(0, 13);
+    this.body.setTranslation({ x: 0, y: groundHeight + bodyHeight, z: 13 }, true);
+    this.model.position.set(0, groundHeight, 13);
     this.verticalSpeed = 0;
+    this.blocking = false;
+    this.attackEffectRemaining = 0;
+    this.attackTrail.visible = false;
   }
 
   get attributes(): Attributes {
@@ -177,5 +195,6 @@ export class Player {
   dispose(): void {
     this.physics.removeRigidBody(this.body);
     this.physics.removeCharacterController(this.controller);
+    disposeActorModel(this.model);
   }
 }

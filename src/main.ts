@@ -11,5 +11,6 @@ if (!canvas || !root) {
 const game = new Game(canvas, root);
 void game.start().catch((error: unknown) => {
   console.error('RED failed to start.', error);
+  game.dispose();
   root.innerHTML = '<div class="fatal-error"><h1>The valley is unavailable</h1><p>Refresh the page to try again.</p></div>';
 });

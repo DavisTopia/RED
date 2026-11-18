@@ -1,0 +1,58 @@
+# R.E.D. Visual and Technical QA
+
+## Summary
+
+The final pass fixed several confirmed animation and resource-lifecycle defects, smoothed third-person camera follow, added lightweight weapon/spirit effects, and reduced terrain-construction work. The production build and local browser smoke tests pass. Performance is **not certified for release hardware**: the only FPS sample available here was a software-rendered headless browser, and real-device profiling was not possible.
+
+## Changes made
+
+- Fixed humanoid knee animation: the rig searched for a `Group` where the lower-leg joint is a `Bone`.
+- Passed blocking and airborne state into the character rig; added blended block/jump poses and eased locomotion transitions.
+- Added third-person camera follow smoothing while keeping first-person view immediate.
+- Added a reusable sword-swing trail and a pulsing, bobbing spirit aura.
+- Disposed of spirit and loot GPU resources when dismissed, collected, or cleared. Unregistered input/UI/canvas/window listeners, closed IndexedDB on disposal, cleared the world scene, and cancelled pending respawn timers.
+- Precomputed the terrain height grid once and reused neighboring heights for slope coloring. Terrain generation now evaluates the height field once per vertex instead of once for the vertex plus four slope samples. Curve-distance scans compare squared distances and take one square root per query; removed temporary landmark arrays and per-vertex reduction callbacks. Reduced the high-frequency components in the procedural ground texture.
+
+## Tests actually run
+
+| Area | Result |
+|---|---|
+| Production build | `npm run build` passed (TypeScript and Vite). |
+| Desktop menu/game | Playwright Chromium, WebGL2, 1440×900: menu and four races appeared; selected Elf, created a character, opened Pack and Settings, closed the panel with Escape, sent keyboard movement and canvas-attack input, and observed no browser/page errors. Player displacement and hit outcomes were not asserted. |
+| Save/load | In the same browser context, verified the character record in IndexedDB, reloaded, continued the saved character, and verified the HUD name. |
+| Mobile portrait | Playwright touch/coarse-pointer emulation, 390×844: created a Beastkin character; checked race-card sizing, HUD visibility, 44×44 action-button bounds, verified joystick thumb movement, camera toggle, spirit action, attack input, and block press/release. |
+| Mobile landscape | Playwright touch/coarse-pointer emulation, 844×390: verified touch controls remain visible, all seven action buttons stay within the viewport, and the document has no horizontal overflow. |
+| Animation poses | Direct browser checks of the procedural rig confirmed idle breathing, walking knee motion, distinct walking/running gait, and attack, block, jump, damage, and death poses. A direct camera check confirmed eased third-person follow. These isolate rig/camera state; they do not prove every state is triggered correctly by a full gameplay encounter. |
+| Whitespace | `git diff --check` passed. |
+| GitHub Pages | Pages reports `built`; the site returned HTTP 200. The latest visible deployment workflow succeeded for commit `1bee8637176486334d0b884ca57c045b1976fc7d`. The checked-out `HEAD` matches that commit, but the current working-tree changes are uncommitted and therefore are **not deployed**. The production URL was not browser-smoke-tested. |
+
+### Not verified in this pass
+
+- Real Android/iOS devices, physical safe-area insets, or mobile GPU behavior.
+- Actual damage/block mitigation, creature kills/rewards, death/respawn, companion following/attacks, or long-session save stability.
+- Runtime behavior of every panel/control, asset-load fallback paths, memory/VRAM usage, or repeated scene creation/disposal under a profiler.
+- Deployment of the current uncommitted changes.
+
+The menu, character creation, race selection, continue/save path, keyboard movement input, panel navigation, touch layout, joystick input, and isolated animation poses were exercised as described above. Other features should not be considered fully gameplay-verified.
+
+## Performance findings
+
+- Five-second render-loop samples against the **production preview** in headless Chromium 159 using SwiftShader software rendering measured about **1 FPS at 1440×900** and **3 FPS at 390×844**. Instrumented WebGL submissions averaged about **216 calls/frame** and **135 calls/frame**, respectively. Startup to the interactive menu took about 6.1 seconds on the desktop viewport and 2.8 seconds on the mobile viewport. The environment exposed two hardware threads and selected the mobile graphics profile. These results identify a slow software-rendering test environment, not representative device FPS; they are not a pass against a 30/60 FPS target.
+- The production build emits `three` at 573.26 kB (147.28 kB gzip) and `rapier` at 2,139.14 kB (781.79 kB gzip), so Vite reports the existing 500 kB chunk-size advisory. `three-addons` is 50.24 kB (15.04 kB gzip); the application chunk is 95.45 kB (30.83 kB gzip). No bundle-splitting or dependency changes were made in this pass.
+- The world already uses chunked instanced vegetation, simplified radial vegetation meshes, capped pixel ratio, and disabled shadows/antialiasing on constrained/coarse-pointer profiles. The vegetation simplification is **static by valley radius**, not camera-distance-adaptive LOD.
+- The terrain-generation reduction is source-level verified, but startup-time improvement was not benchmarked. GPU frame timing, real-device FPS, and memory/VRAM profiles remain unknown.
+
+## Remaining visual limitations
+
+- The valley, characters, creatures, vegetation, and effects are procedural low-poly geometry. No imported production character/world models, authored PBR texture sets, or animation clips are present.
+- Current rigs and the new weapon/spirit effects are lightweight procedural approximations, not production skeletal animation or authored VFX.
+- The scene has atmospheric fog and depth, but no volumetric fog, dynamic camera-distance LOD, or hardware-validated shadow quality. The spirit aura is a small point-particle effect.
+- The game remains a playable prototype; the cave is a landmark entrance rather than a finished dungeon, and several panels represent status rather than full game systems.
+
+## Mobile compatibility
+
+Portrait (390×844) and landscape (844×390) were checked in Chromium touch/coarse-pointer emulation. The tested HUD controls were visible, at least 44×44 CSS pixels, and within the viewport; the joystick responded to pointer movement. CSS safe-area insets are present, but notches, browser chrome, device-specific scaling, and physical touch latency were not tested on a device.
+
+## Deployment status
+
+GitHub Pages is configured for `main` and currently reports `built`; `https://davistopia.github.io/RED/` returned HTTP 200. The most recent visible Actions deployment succeeded at the current `HEAD`. The menu/HUD/final-QA working-tree edits are still local and uncommitted, so they have not been published or tested on the live site.

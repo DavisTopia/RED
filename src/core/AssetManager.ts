@@ -1,5 +1,28 @@
 import * as THREE from 'three';
 
+export interface LoadedModel {
+  scene: THREE.Object3D;
+  animations: THREE.AnimationClip[];
+}
+
+export interface PBRMaterialOptions extends Omit<
+  THREE.MeshStandardMaterialParameters,
+  'map' | 'normalMap' | 'roughnessMap' | 'metalnessMap' | 'aoMap'
+> {
+  baseColorMap?: string;
+  normalMap?: string;
+  roughnessMap?: string;
+  metallicMap?: string;
+  ambientOcclusionMap?: string;
+}
+
+type PBRMapName = 'baseColorMap' | 'normalMap' | 'roughnessMap' | 'metallicMap' | 'ambientOcclusionMap';
+
+interface CachedModel {
+  scene: THREE.Object3D;
+  animations: THREE.AnimationClip[];
+}
+
 export class AssetManager {
   readonly materials = {
     ground: new THREE.MeshStandardMaterial({ color: 0x526348, roughness: 1 }),
@@ -17,6 +40,120 @@ export class AssetManager {
     bear: new THREE.MeshStandardMaterial({ color: 0x49352c, roughness: 0.95 }),
     spirit: new THREE.MeshStandardMaterial({ color: 0x87d9d4, emissive: 0x278c93, emissiveIntensity: 1.8, transparent: true, opacity: 0.72 }),
   };
+
+  private readonly textureLoader = new THREE.TextureLoader();
+  private readonly modelCache = new Map<string, Promise<CachedModel>>();
+  private readonly textureCache = new Map<string, Promise<THREE.Texture>>();
+  private readonly loadedMaterials = new Set<THREE.Material>();
+  private disposed = false;
+
+  constructor(
+    private readonly maxAnisotropy = 1,
+    private readonly reportError: (message: string, error: unknown) => void = (message, error) => {
+      console.error(message, error);
+    },
+  ) {}
+
+  async loadModel(
+    assetPath: string,
+    fallback: () => THREE.Group,
+  ): Promise<LoadedModel> {
+    try {
+      const url = this.resolveAssetUrl(assetPath);
+      let request = this.modelCache.get(url);
+      if (!request) {
+        request = import('three/addons/loaders/GLTFLoader.js')
+          .then(({ GLTFLoader }) => new GLTFLoader().loadAsync(url))
+          .then((gltf) => ({ scene: gltf.scene, animations: gltf.animations }))
+          .catch((error: unknown) => {
+            this.modelCache.delete(url);
+            throw error;
+          });
+        this.modelCache.set(url, request);
+      }
+
+      const [cached, skeletonUtils] = await Promise.all([
+        request,
+        import('three/addons/utils/SkeletonUtils.js'),
+      ]);
+      return { scene: skeletonUtils.clone(cached.scene), animations: cached.animations };
+    } catch (error) {
+      this.reportError(`Could not load 3D asset "${assetPath}".`, error);
+      return { scene: fallback(), animations: [] };
+    }
+  }
+
+  async loadTexture(
+    assetPath: string,
+    colorTexture = false,
+  ): Promise<THREE.Texture> {
+    let url: string;
+    try {
+      url = this.resolveAssetUrl(assetPath);
+    } catch (error) {
+      this.reportError(`Could not resolve texture "${assetPath}".`, error);
+      throw error;
+    }
+    const cacheKey = `${url}|${colorTexture ? 'srgb' : 'linear'}`;
+    let request = this.textureCache.get(cacheKey);
+    if (!request) {
+      request = this.textureLoader.loadAsync(url).then((texture) => {
+        texture.colorSpace = colorTexture ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        texture.anisotropy = this.maxAnisotropy;
+        return texture;
+      }).catch((error: unknown) => {
+        this.textureCache.delete(cacheKey);
+        this.reportError(`Could not load texture "${assetPath}".`, error);
+        throw error;
+      });
+      this.textureCache.set(cacheKey, request);
+    }
+    return request;
+  }
+
+  async createPBRMaterial(options: PBRMaterialOptions): Promise<THREE.MeshStandardMaterial> {
+    const configuredMaps: Array<[PBRMapName, string, boolean]> = [
+      ['baseColorMap', options.baseColorMap ?? '', true],
+      ['normalMap', options.normalMap ?? '', false],
+      ['roughnessMap', options.roughnessMap ?? '', false],
+      ['metallicMap', options.metallicMap ?? '', false],
+      ['ambientOcclusionMap', options.ambientOcclusionMap ?? '', false],
+    ];
+    const mapUrls = configuredMaps.filter(([, url]) => url.length > 0);
+    const results = await Promise.allSettled(
+      mapUrls.map(([, url, colorTexture]) => this.loadTexture(url, colorTexture)),
+    );
+    const maps: Partial<Record<PBRMapName, THREE.Texture>> = {};
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') maps[mapUrls[index][0]] = result.value;
+    });
+
+    const {
+      baseColorMap: _baseColorMap,
+      normalMap: _normalMap,
+      roughnessMap: _roughnessMap,
+      metallicMap: _metallicMap,
+      ambientOcclusionMap: _ambientOcclusionMap,
+      ...materialOptions
+    } = options;
+    const material = new THREE.MeshStandardMaterial({
+      ...materialOptions,
+      map: maps.baseColorMap,
+      normalMap: maps.normalMap,
+      roughnessMap: maps.roughnessMap,
+      metalnessMap: maps.metallicMap,
+      aoMap: maps.ambientOcclusionMap,
+    });
+    this.loadedMaterials.add(material);
+    return material;
+  }
+
+  resolveAssetUrl(assetPath: string): string {
+    const projectRelativePath = assetPath.startsWith('/') && !assetPath.startsWith('//')
+      ? assetPath.slice(1)
+      : assetPath;
+    return new URL(projectRelativePath, document.baseURI).href;
+  }
 
   createTree(scale = 1): THREE.Group {
     const tree = new THREE.Group();
@@ -43,5 +180,55 @@ export class AssetManager {
     rock.castShadow = true;
     rock.receiveShadow = true;
     return rock;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>([
+      ...Object.values(this.materials),
+      ...this.loadedMaterials,
+    ]);
+    const textures = new Set<THREE.Texture>();
+    for (const request of this.modelCache.values()) {
+      void request.then(({ scene }) => {
+        const modelGeometries = new Set<THREE.BufferGeometry>();
+        const modelMaterials = new Set<THREE.Material>();
+        scene.traverse((object) => {
+          if (object instanceof THREE.Mesh) {
+            modelGeometries.add(object.geometry);
+            const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
+            for (const material of meshMaterials) modelMaterials.add(material);
+          }
+        });
+        this.disposeResources(modelGeometries, modelMaterials, new Set());
+      }, () => undefined);
+    }
+    for (const request of this.textureCache.values()) {
+      void request.then((texture) => {
+        texture.dispose();
+      }, () => undefined);
+    }
+    this.disposeResources(geometries, materials, textures);
+    this.modelCache.clear();
+    this.textureCache.clear();
+    this.loadedMaterials.clear();
+  }
+
+  private disposeResources(
+    geometries: Set<THREE.BufferGeometry>,
+    materials: Set<THREE.Material>,
+    textures: Set<THREE.Texture>,
+  ): void {
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) {
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) textures.add(value);
+      }
+      material.dispose();
+    }
+    for (const texture of textures) texture.dispose();
   }
 }
