@@ -100,7 +100,9 @@ export function createCharacterRig(race: Race): CharacterRig {
     new THREE.Vector3(0, 0.22, 0.175),
   );
   chestPlate.rotation.x = -0.08;
-  mesh(new THREE.TorusGeometry(0.21, 0.018, 6, 24), trim, spine, new THREE.Vector3(0, 0.22, 0.217)).scale.set(1, 1.1, 0.35);
+  mesh(new THREE.TorusGeometry(0.21, 0.018, 6, 24), trim, spine, new THREE.Vector3(0, 0.22, 0.251)).scale.set(1, 1.1, 0.35);
+  const chestSigil = mesh(new THREE.BoxGeometry(0.075, 0.1, 0.018), trim, spine, new THREE.Vector3(0, 0.22, 0.26));
+  chestSigil.rotation.z = Math.PI / 4;
   for (const side of [-1, 1]) {
     const strap = mesh(new THREE.CapsuleGeometry(0.022, 0.36, 3, 7), leather, spine, new THREE.Vector3(side * 0.105, 0.23, 0.257));
     strap.rotation.z = side * -0.42;
@@ -180,6 +182,10 @@ export function createCharacterRig(race: Race): CharacterRig {
 
   const hairCap = mesh(new THREE.SphereGeometry(0.195, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.53), hair, head, new THREE.Vector3(0, 0.11, -0.015));
   hairCap.scale.set(1.02, 0.9, 1.05);
+  for (let i = -1; i <= 1; i++) {
+    const fringe = mesh(new THREE.CapsuleGeometry(0.021, 0.065, 3, 7), hair, head, new THREE.Vector3(i * 0.055, 0.16 - Math.abs(i) * 0.012, 0.14));
+    fringe.rotation.z = i * 0.24;
+  }
   for (let i = 0; i < (race === 'Dwarf' ? 7 : 5); i++) {
     const lock = mesh(new THREE.CapsuleGeometry(0.025, 0.12 + (i % 3) * 0.035, 3, 6), hair, head, new THREE.Vector3((i - 2) * 0.045, 0.055, -0.13));
     lock.rotation.z = (i - 2) * 0.17;
@@ -209,6 +215,9 @@ export function createCharacterRig(race: Race): CharacterRig {
     const pauldron = mesh(new THREE.SphereGeometry(0.15, 16, 12), armor, shoulder, new THREE.Vector3(side * 0.035, 0.015, 0.015));
     pauldron.scale.set(1.14, 0.68, 1.12);
     mesh(new THREE.TorusGeometry(0.105, 0.012, 5, 16), trim, shoulder, new THREE.Vector3(side * 0.035, -0.01, 0.07)).scale.set(1, 0.78, 0.55);
+    for (const rivetSide of [-1, 1]) {
+      mesh(new THREE.SphereGeometry(0.014, 8, 6), trim, shoulder, new THREE.Vector3(side * 0.09, -0.04, rivetSide * 0.065 + 0.09));
+    }
     const upperArm = new THREE.Bone();
     upperArm.name = side < 0 ? 'LeftUpperArm' : 'RightUpperArm';
     upperArm.position.y = -0.09;
@@ -223,6 +232,7 @@ export function createCharacterRig(race: Race): CharacterRig {
     const bracer = mesh(new THREE.CylinderGeometry(0.082, 0.095, 0.13, 12, 1, true), leather, elbow, new THREE.Vector3(0, -0.21, 0.01));
     bracer.rotation.z = side * 0.04;
     mesh(new THREE.TorusGeometry(0.088, 0.012, 5, 16), trim, elbow, new THREE.Vector3(0, -0.15, 0.01));
+    mesh(new THREE.TorusGeometry(0.086, 0.008, 5, 16), trim, elbow, new THREE.Vector3(0, -0.27, 0.01));
     const hand = new THREE.Bone();
     hand.name = side < 0 ? 'LeftHand' : 'RightHand';
     hand.position.y = -0.3;
