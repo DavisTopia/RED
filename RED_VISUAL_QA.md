@@ -24,14 +24,14 @@ The final pass fixed several confirmed animation and resource-lifecycle defects,
 | Mobile landscape | Playwright touch/coarse-pointer emulation, 844×390: verified touch controls remain visible, all seven action buttons stay within the viewport, and the document has no horizontal overflow. |
 | Animation poses | Direct browser checks of the procedural rig confirmed idle breathing, walking knee motion, distinct walking/running gait, and attack, block, jump, damage, and death poses. A direct camera check confirmed eased third-person follow. These isolate rig/camera state; they do not prove every state is triggered correctly by a full gameplay encounter. |
 | Whitespace | `git diff --check` passed. |
-| GitHub Pages | Pages reports `built`; the site returned HTTP 200. The latest visible deployment workflow succeeded for commit `1bee8637176486334d0b884ca57c045b1976fc7d`. The checked-out `HEAD` matches that commit, but the current working-tree changes are uncommitted and therefore are **not deployed**. The production URL was not browser-smoke-tested. |
+| GitHub Pages | The Actions deployment workflow succeeded for commit `f5b9a59edfdb8eed530bb902bec793cae323885b`, but the live browser smoke test failed: the root serves an HTML entrypoint referencing `./src/main.ts`, returned as `video/mp2t`, and the game menu never appears. Pages is configured for legacy publishing from `main` / `/`, not the workflow artifact. |
 
 ### Not verified in this pass
 
 - Real Android/iOS devices, physical safe-area insets, or mobile GPU behavior.
 - Actual damage/block mitigation, creature kills/rewards, death/respawn, companion following/attacks, or long-session save stability.
 - Runtime behavior of every panel/control, asset-load fallback paths, memory/VRAM usage, or repeated scene creation/disposal under a profiler.
-- Deployment of the current uncommitted changes.
+- Live menu/game startup: the deployed root does not serve the Vite production build, so live gameplay and save/load remain unverified.
 
 The menu, character creation, race selection, continue/save path, keyboard movement input, panel navigation, touch layout, joystick input, and isolated animation poses were exercised as described above. Other features should not be considered fully gameplay-verified.
 
@@ -55,4 +55,4 @@ Portrait (390×844) and landscape (844×390) were checked in Chromium touch/coar
 
 ## Deployment status
 
-GitHub Pages is configured for `main` and currently reports `built`; `https://davistopia.github.io/RED/` returned HTTP 200. The most recent visible Actions deployment succeeded at the current `HEAD`. The menu/HUD/final-QA working-tree edits are still local and uncommitted, so they have not been published or tested on the live site.
+The Actions workflow succeeded for commit `f5b9a59edfdb8eed530bb902bec793cae323885b`, but this does **not** mean the production build is live. Pages is configured as legacy publishing from `main` / `/`. The URL returns HTTP 200, but serves the source `index.html` referencing `./src/main.ts`; that TypeScript request also returns HTTP 200 with MIME type `video/mp2t`, which browsers reject as a module. A live Playwright smoke test confirmed that the menu never appears. An attempt to switch Pages to workflow publishing was rejected with HTTP 403 due to insufficient integration permissions. A repository admin must set **Settings → Pages → Build and deployment → Source → GitHub Actions**, then rerun the `Deploy RED to GitHub Pages` workflow. Do not consider the live game verified until the menu and gameplay are smoke-tested at the Pages URL.
