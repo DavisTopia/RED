@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import * as RAPIER from '@dimforge/rapier3d-compat';
+import type { AssetManager } from '../core/AssetManager';
 import type { Attributes, CharacterData } from '../core/types';
+import { PLAYER_CHARACTER_ASSETS } from '../actors/CharacterAssetConfig';
 import { CameraManager } from './CameraManager';
 import { createCharacterRig, type CharacterRig } from '../actors/CharacterRig';
+import { GLTFCharacterRig, type RiggedCharacterAssetConfig } from '../actors/GLTFCharacterRig';
 import { disposeActorModel } from '../actors/ActorGeometry';
 
 export class Player {
@@ -27,12 +30,14 @@ export class Player {
   private attackEffectRemaining = 0;
   private attackSequence = 0;
   private elapsed = 0;
+  private disposed = false;
 
   constructor(
     private readonly physics: RAPIER.World,
     private readonly camera: THREE.PerspectiveCamera,
     readonly character: CharacterData,
     private readonly groundHeightAt: (x: number, z: number) => number = () => 0,
+    private readonly assets?: AssetManager,
   ) {
     this.health = character.attributes.health;
     this.stamina = character.attributes.stamina;
@@ -64,6 +69,8 @@ export class Player {
   private createModel(): void {
     this.visualRig = createCharacterRig(this.character.race);
     this.model.add(this.visualRig.model);
+    const actorConfig = PLAYER_CHARACTER_ASSETS[this.character.race];
+    if (actorConfig && this.assets) void this.loadImportedModel(actorConfig, this.assets);
     this.attackTrailMaterial = new THREE.MeshBasicMaterial({
       color: 0xe7ca82,
       transparent: true,
@@ -89,6 +96,34 @@ export class Player {
     this.camera.add(this.firstPersonAttackTrail);
     this.createFirstPersonWeapon();
     this.model.position.set(0, this.groundHeightAt(0, 13), 13);
+  }
+
+  private async loadImportedModel(config: RiggedCharacterAssetConfig, assets: AssetManager): Promise<void> {
+    const loaded = await assets.loadModel(config.path, () => new THREE.Group());
+    if (this.disposed) {
+      assets.releaseModel(loaded.scene);
+      return;
+    }
+
+    let importedRig: GLTFCharacterRig;
+    try {
+      importedRig = new GLTFCharacterRig(loaded, config, assets);
+    } catch (error) {
+      assets.releaseModel(loaded.scene);
+      console.warn(`Keeping the procedural ${this.character.race} model: ${config.path} was rejected.`, error);
+      return;
+    }
+
+    const previousRig = this.visualRig;
+    this.attackTrail.removeFromParent();
+    const weaponSocket = importedRig.model.getObjectByName(config.weaponSocketName ?? 'WeaponSocket')
+      ?? importedRig.model;
+    weaponSocket.add(this.attackTrail);
+    this.model.remove(previousRig.model);
+    this.visualRig = importedRig;
+    this.model.add(importedRig.model);
+    if (previousRig.dispose) previousRig.dispose();
+    else disposeActorModel(previousRig.model);
   }
 
   private createFirstPersonWeapon(): void {
@@ -349,11 +384,16 @@ export class Player {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.camera.remove(this.firstPersonAttackTrail);
     this.camera.remove(this.firstPersonWeapon);
+    this.attackTrail.removeFromParent();
     disposeActorModel(this.firstPersonWeapon);
+    disposeActorModel(this.attackTrail);
     this.physics.removeRigidBody(this.body);
     this.physics.removeCharacterController(this.controller);
-    disposeActorModel(this.model);
+    this.model.remove(this.visualRig.model);
+    if (this.visualRig.dispose) this.visualRig.dispose();
+    else disposeActorModel(this.visualRig.model);
   }
 }

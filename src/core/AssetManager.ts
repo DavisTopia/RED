@@ -21,6 +21,13 @@ type PBRMapName = 'baseColorMap' | 'normalMap' | 'roughnessMap' | 'metallicMap' 
 interface CachedModel {
   scene: THREE.Object3D;
   animations: THREE.AnimationClip[];
+  resources: ModelResources;
+}
+
+interface ModelResources {
+  geometries: Set<THREE.BufferGeometry>;
+  materials: Set<THREE.Material>;
+  textures: Set<THREE.Texture>;
 }
 
 export class AssetManager {
@@ -45,6 +52,8 @@ export class AssetManager {
   private readonly modelCache = new Map<string, Promise<CachedModel>>();
   private readonly textureCache = new Map<string, Promise<THREE.Texture>>();
   private readonly loadedMaterials = new Set<THREE.Material>();
+  private readonly modelInstances = new Map<THREE.Object3D, ModelResources>();
+  private readonly modelResourceReferences = new Map<THREE.BufferGeometry | THREE.Material | THREE.Texture, number>();
   private disposed = false;
   private maxAnisotropy: number;
 
@@ -77,7 +86,11 @@ export class AssetManager {
       if (!request) {
         request = import('three/addons/loaders/GLTFLoader.js')
           .then(({ GLTFLoader }) => new GLTFLoader().loadAsync(url))
-          .then((gltf) => ({ scene: gltf.scene, animations: gltf.animations }))
+          .then((gltf) => {
+            const resources = this.collectModelResources(gltf.scene);
+            this.retainModelResources(resources);
+            return { scene: gltf.scene, animations: gltf.animations, resources };
+          })
           .catch((error: unknown) => {
             this.modelCache.delete(url);
             throw error;
@@ -89,11 +102,23 @@ export class AssetManager {
         request,
         import('three/addons/utils/SkeletonUtils.js'),
       ]);
-      return { scene: skeletonUtils.clone(cached.scene), animations: cached.animations };
+      if (this.disposed) return { scene: fallback(), animations: [] };
+      const scene = skeletonUtils.clone(cached.scene);
+      const resources = this.collectModelResources(scene);
+      this.retainModelResources(resources);
+      this.modelInstances.set(scene, resources);
+      return { scene, animations: cached.animations };
     } catch (error) {
       this.reportError(`Could not load 3D asset "${assetPath}".`, error);
       return { scene: fallback(), animations: [] };
     }
+  }
+
+  releaseModel(scene: THREE.Object3D): void {
+    const resources = this.modelInstances.get(scene);
+    if (!resources) return;
+    this.modelInstances.delete(scene);
+    this.releaseModelResources(resources);
   }
 
   async loadTexture(
@@ -199,35 +224,66 @@ export class AssetManager {
     if (this.disposed) return;
     this.disposed = true;
 
-    const geometries = new Set<THREE.BufferGeometry>();
+    for (const scene of [...this.modelInstances.keys()]) this.releaseModel(scene);
+
     const materials = new Set<THREE.Material>([
       ...Object.values(this.materials),
       ...this.loadedMaterials,
     ]);
-    const textures = new Set<THREE.Texture>();
     for (const request of this.modelCache.values()) {
-      void request.then(({ scene }) => {
-        const modelGeometries = new Set<THREE.BufferGeometry>();
-        const modelMaterials = new Set<THREE.Material>();
-        scene.traverse((object) => {
-          if (object instanceof THREE.Mesh) {
-            modelGeometries.add(object.geometry);
-            const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
-            for (const material of meshMaterials) modelMaterials.add(material);
-          }
-        });
-        this.disposeResources(modelGeometries, modelMaterials, new Set());
-      }, () => undefined);
+      void request.then(({ resources }) => this.releaseModelResources(resources), () => undefined);
     }
     for (const request of this.textureCache.values()) {
       void request.then((texture) => {
         texture.dispose();
       }, () => undefined);
     }
-    this.disposeResources(geometries, materials, textures);
+    this.disposeResources(new Set(), materials, new Set());
     this.modelCache.clear();
     this.textureCache.clear();
     this.loadedMaterials.clear();
+    this.modelInstances.clear();
+  }
+
+  private collectModelResources(scene: THREE.Object3D): ModelResources {
+    const resources: ModelResources = {
+      geometries: new Set(),
+      materials: new Set(),
+      textures: new Set(),
+    };
+    scene.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      resources.geometries.add(object.geometry);
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        resources.materials.add(material);
+        for (const value of Object.values(material)) {
+          if (value instanceof THREE.Texture) resources.textures.add(value);
+        }
+      }
+    });
+    return resources;
+  }
+
+  private retainModelResources(resources: ModelResources): void {
+    for (const resource of [...resources.geometries, ...resources.materials, ...resources.textures]) {
+      this.modelResourceReferences.set(resource, (this.modelResourceReferences.get(resource) ?? 0) + 1);
+    }
+  }
+
+  private releaseModelResources(resources: ModelResources): void {
+    const disposeWhenUnused = (resource: THREE.BufferGeometry | THREE.Material | THREE.Texture): void => {
+      const references = (this.modelResourceReferences.get(resource) ?? 1) - 1;
+      if (references > 0) {
+        this.modelResourceReferences.set(resource, references);
+        return;
+      }
+      this.modelResourceReferences.delete(resource);
+      resource.dispose();
+    };
+    for (const geometry of resources.geometries) disposeWhenUnused(geometry);
+    for (const material of resources.materials) disposeWhenUnused(material);
+    for (const texture of resources.textures) disposeWhenUnused(texture);
   }
 
   private disposeResources(

@@ -146,6 +146,7 @@ export class Game {
       this.camera,
       character,
       (x, z) => this.world.getSurfaceHeight(x, z),
+      this.assets,
     );
     this.world.scene.add(this.player.model);
     this.creatures = new CreatureSystem(

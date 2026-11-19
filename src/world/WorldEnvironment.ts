@@ -40,6 +40,52 @@ function chunkKey(x: number, z: number): string {
   return `${column},${row}`;
 }
 
+function createCanopyGeometry(type: 'pine' | 'broadleaf', detail: number): THREE.BufferGeometry {
+  const geometry = type === 'pine'
+    ? new THREE.ConeGeometry(1, 1, detail === 0 ? 12 : 24, detail === 0 ? 7 : 16)
+    : new THREE.IcosahedronGeometry(1, detail);
+  const positions = geometry.getAttribute('position');
+  for (let index = 0; index < positions.count; index++) {
+    const x = positions.getX(index);
+    const y = positions.getY(index);
+    const z = positions.getZ(index);
+    const angle = Math.atan2(z, x);
+    const radialVariation = Math.sin(angle * 7 + y * 17) * 0.045
+      + Math.sin(angle * 13 - y * 23) * 0.025
+      + Math.sin(x * 19 + z * 17 + y * 11) * 0.018;
+    if (type === 'pine') {
+      const tierVariation = Math.sin((y + 0.5) * Math.PI * 9 + Math.sin(angle * 5) * 0.45) * 0.055;
+      const sourceRadius = Math.hypot(x, z);
+      const radius = sourceRadius * (1 + radialVariation + tierVariation);
+      if (sourceRadius > 0) {
+        positions.setX(index, (x / sourceRadius) * radius);
+        positions.setZ(index, (z / sourceRadius) * radius);
+      }
+    } else {
+      const radius = 1 + radialVariation;
+      positions.setXYZ(index, x * radius, y * radius, z * radius);
+    }
+  }
+  positions.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function createTrunkGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.CylinderGeometry(0.055, 0.2, 1, 12, 8);
+  const positions = geometry.getAttribute('position');
+  for (let index = 0; index < positions.count; index++) {
+    const y = positions.getY(index) + 0.5;
+    positions.setX(index, positions.getX(index) + Math.sin(y * Math.PI * 1.4) * y * 0.025);
+    positions.setZ(index, positions.getZ(index) + Math.sin(y * Math.PI * 2.1) * y * 0.018);
+  }
+  positions.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 export class WorldEnvironment {
   private readonly colliders: RAPIER.RigidBody[] = [];
   private readonly geometries = new Set<THREE.BufferGeometry>();
@@ -50,6 +96,7 @@ export class WorldEnvironment {
   private readonly riverCurve: THREE.CatmullRomCurve3;
   private readonly paths: PathDefinition[];
   private readonly audio = new AmbientAudio();
+  private disposed = false;
   private terrainTexture!: THREE.DataTexture;
   private particles!: THREE.Points;
   private sun!: THREE.DirectionalLight;
@@ -277,6 +324,7 @@ export class WorldEnvironment {
       metalness: 0,
     });
     this.materials.add(material);
+    void this.applyForestGroundMaterial(material);
     const terrain = new THREE.Mesh(geometry, material);
     terrain.receiveShadow = true;
     terrain.frustumCulled = false;
@@ -290,6 +338,29 @@ export class WorldEnvironment {
     this.colliders.push(body);
 
     this.buildWorldBoundaries();
+  }
+
+  private async applyForestGroundMaterial(material: THREE.MeshStandardMaterial): Promise<void> {
+    const pbr = await this.assets.createPBRMaterial({
+      roughness: 1,
+      metalness: 0,
+      baseColorMap: 'assets/terrain/forest_ground_04_diff_1k.jpg',
+      normalMap: 'assets/terrain/forest_ground_04_nor_gl_1k.jpg',
+      roughnessMap: 'assets/terrain/forest_ground_04_rough_1k.jpg',
+    });
+    if (this.disposed) return;
+
+    material.map = pbr.map ?? material.map;
+    material.normalMap = pbr.normalMap;
+    material.roughnessMap = pbr.roughnessMap;
+    material.normalScale.set(0.65, 0.65);
+    for (const texture of [material.map, material.normalMap, material.roughnessMap]) {
+      if (!texture) continue;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.needsUpdate = true;
+    }
+    material.needsUpdate = true;
   }
 
   private createGroundTexture(): THREE.DataTexture {
@@ -520,11 +591,11 @@ export class WorldEnvironment {
 
   private buildForest(): void {
     const random = randomGenerator(93751);
-    const trunkGeometry = new THREE.CylinderGeometry(0.12, 0.2, 1, 8, 2);
-    const pineGeometry = new THREE.ConeGeometry(1, 1, 8, 3);
-    const leafGeometry = new THREE.SphereGeometry(1, 9, 7);
-    const pineLodGeometry = new THREE.ConeGeometry(1, 1, 5, 1);
-    const leafLodGeometry = new THREE.SphereGeometry(1, 5, 4);
+    const trunkGeometry = createTrunkGeometry();
+    const pineGeometry = createCanopyGeometry('pine', 1);
+    const leafGeometry = createCanopyGeometry('broadleaf', 3);
+    const pineLodGeometry = createCanopyGeometry('pine', 0);
+    const leafLodGeometry = createCanopyGeometry('broadleaf', 1);
     const bushGeometry = new THREE.IcosahedronGeometry(1, 1);
     const fernGeometry = new THREE.ConeGeometry(0.12, 0.78, 4);
     const grassGeometry = new THREE.ConeGeometry(0.075, 0.52, 4);
@@ -1147,6 +1218,7 @@ export class WorldEnvironment {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.audio.dispose();
     for (const body of this.colliders) this.physics.removeRigidBody(body);
     for (const geometry of this.geometries) geometry.dispose();

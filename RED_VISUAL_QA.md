@@ -57,6 +57,13 @@ Portrait (390×844) and landscape (844×390) were checked in Chromium touch/coar
 
 The Actions workflow succeeded for commit `f5b9a59edfdb8eed530bb902bec793cae323885b`, but this does **not** mean the production build is live. Pages is configured as legacy publishing from `main` / `/`. The URL returns HTTP 200, but serves the source `index.html` referencing `./src/main.ts`; that TypeScript request also returns HTTP 200 with MIME type `video/mp2t`, which browsers reject as a module. A live Playwright smoke test confirmed that the menu never appears. An attempt to switch Pages to workflow publishing was rejected with HTTP 403 due to insufficient integration permissions. A repository admin must set **Settings → Pages → Build and deployment → Source → GitHub Actions**, then rerun the `Deploy RED to GitHub Pages` workflow. Do not consider the live game verified until the menu and gameplay are smoke-tested at the Pages URL.
 
+## Visual transformation stage: forest and terrain
+
+- Replaced the instanced forest's faceted low-detail trunk/canopy primitives with bent tapered trunks, irregular subdivided canopy geometry, and reduced-detail distant variants. Seeded placement, foliage wind, chunk batching, collision, and gameplay APIs are unchanged.
+- Added Poly Haven Forest Ground 04 1K diffuse, OpenGL normal, and roughness maps to the terrain material. The prior generated ground texture remains the fallback if a map fails to load. Source and license are recorded in `public/assets/ASSET_MANIFEST.md`.
+- `npm run build` passes after both changes. No browser screenshot, console/network check, runtime asset-load check, rendered-quality inspection, FPS sample, or physical-device performance test was performed during this stage.
+- This is a limited environment-material/geometry improvement, **not** the requested full transformation. Rigged high-quality player, companion, and enemy models, authored tree/rock meshes, wider PBR environment coverage, and cinematic 3D menu work remain unimplemented; the current actors and much of the world are still procedural prototype art.
+
 ## Follow-up visual/combat pass
 
 - Added race-colored, animated capes and a longer, shaped sword blade to make the player silhouette and weapon more distinct while retaining the procedural rig and existing gameplay interfaces.

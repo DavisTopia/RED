@@ -15,6 +15,7 @@ export interface CharacterRig {
     jumping: boolean,
     attackSequence?: number,
   ): void;
+  dispose?(): void;
 }
 
 interface RaceStyle {
