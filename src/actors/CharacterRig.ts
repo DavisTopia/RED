@@ -24,13 +24,14 @@ interface RaceStyle {
   cloth: number;
   armor: number;
   hair: number;
+  cape: number;
 }
 
 const RACE_STYLE: Record<Race, RaceStyle> = {
-  Human: { height: 1, width: 1, skin: 0xb77e58, cloth: 0x40584b, armor: 0x777d78, hair: 0x392b24 },
-  Elf: { height: 1.07, width: 0.88, skin: 0xb98d72, cloth: 0x345348, armor: 0x9b8659, hair: 0x343b37 },
-  Dwarf: { height: 0.78, width: 1.2, skin: 0xa96d4d, cloth: 0x68434a, armor: 0x74746b, hair: 0x6a3827 },
-  Beastkin: { height: 1.01, width: 1.04, skin: 0x8e684d, cloth: 0x635d38, armor: 0x786d50, hair: 0x574332 },
+  Human: { height: 1, width: 1, skin: 0xb77e58, cloth: 0x40584b, armor: 0x777d78, hair: 0x392b24, cape: 0x263e38 },
+  Elf: { height: 1.07, width: 0.88, skin: 0xb98d72, cloth: 0x345348, armor: 0x9b8659, hair: 0x343b37, cape: 0x263d46 },
+  Dwarf: { height: 0.78, width: 1.2, skin: 0xa96d4d, cloth: 0x68434a, armor: 0x74746b, hair: 0x6a3827, cape: 0x4c2930 },
+  Beastkin: { height: 1.01, width: 1.04, skin: 0x8e684d, cloth: 0x635d38, armor: 0x786d50, hair: 0x574332, cape: 0x51412b },
 };
 
 function metalMaterial(color: number, roughness: number, metalness: number): THREE.MeshStandardMaterial {
@@ -82,6 +83,7 @@ export function createCharacterRig(race: Race): CharacterRig {
   const glint = new THREE.MeshBasicMaterial({ color: 0xfff5dc });
   const lip = actorToonMaterial(race === 'Beastkin' ? 0x352723 : 0x70483b);
   let tailBone: THREE.Bone | null = null;
+  let capeBone: THREE.Bone | null = null;
 
   const pelvis = new THREE.Bone();
   pelvis.name = 'Hips';
@@ -117,6 +119,41 @@ export function createCharacterRig(race: Race): CharacterRig {
   backEquipmentSocket.name = 'Equipment_Back';
   backEquipmentSocket.position.set(0, 0.1, -0.2);
   spine.add(backEquipmentSocket);
+  capeBone = new THREE.Bone();
+  capeBone.name = 'Cape';
+  capeBone.position.set(0, 0.38, -0.2);
+  spine.add(capeBone);
+  const capePositions: number[] = [];
+  const capeIndices: number[] = [];
+  const capeRows = 8;
+  const capeColumns = 6;
+  for (let row = 0; row <= capeRows; row++) {
+    const t = row / capeRows;
+    const width = THREE.MathUtils.lerp(0.2, 0.4, t);
+    for (let column = 0; column <= capeColumns; column++) {
+      const across = column / capeColumns * 2 - 1;
+      capePositions.push(
+        across * width,
+        -t * 0.82,
+        -t * 0.11 - Math.cos(across * Math.PI * 3) * Math.sin(t * Math.PI) * 0.025,
+      );
+      if (row < capeRows && column < capeColumns) {
+        const current = row * (capeColumns + 1) + column;
+        const next = current + capeColumns + 1;
+        capeIndices.push(current, next, current + 1, next, next + 1, current + 1);
+      }
+    }
+  }
+  const capeGeometry = new THREE.BufferGeometry();
+  capeGeometry.setAttribute('position', new THREE.Float32BufferAttribute(capePositions, 3));
+  capeGeometry.setIndex(capeIndices);
+  capeGeometry.computeVertexNormals();
+  const capeMaterial = actorToonMaterial(style.cape);
+  capeMaterial.side = THREE.DoubleSide;
+  const cape = new THREE.Mesh(capeGeometry, capeMaterial);
+  cape.castShadow = true;
+  cape.receiveShadow = true;
+  capeBone.add(cape);
 
   const belt = mesh(new THREE.TorusGeometry(0.23, 0.038, 7, 24), leather, pelvis, new THREE.Vector3(0, 0.13, 0));
   belt.scale.set(1.13, 0.56, 0.72);
@@ -250,9 +287,25 @@ export function createCharacterRig(race: Race): CharacterRig {
       hand.add(weaponSocket);
       const grip = mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.17, 8), leather, weaponSocket, new THREE.Vector3(0, -0.03, 0));
       grip.rotation.z = -0.36;
-      const blade = mesh(new THREE.BoxGeometry(0.06, 0.69, 0.025), armor, weaponSocket, new THREE.Vector3(0, -0.42, 0));
+      const bladeShape = new THREE.Shape();
+      bladeShape.moveTo(-0.035, 0);
+      bladeShape.lineTo(-0.075, -0.16);
+      bladeShape.lineTo(-0.06, -0.58);
+      bladeShape.lineTo(0, -0.78);
+      bladeShape.lineTo(0.06, -0.58);
+      bladeShape.lineTo(0.075, -0.16);
+      bladeShape.lineTo(0.035, 0);
+      bladeShape.closePath();
+      const blade = mesh(
+        new THREE.ExtrudeGeometry(bladeShape, { depth: 0.028, bevelEnabled: true, bevelSegments: 2, steps: 1, bevelSize: 0.012, bevelThickness: 0.012 }),
+        armor,
+        weaponSocket,
+        new THREE.Vector3(0, -0.1, -0.014),
+      );
       blade.rotation.z = -0.36;
       mesh(new THREE.BoxGeometry(0.22, 0.045, 0.065), trim, weaponSocket, new THREE.Vector3(0, -0.11, 0)).rotation.z = -0.36;
+      const fuller = mesh(new THREE.BoxGeometry(0.018, 0.48, 0.008), trim, weaponSocket, new THREE.Vector3(0, -0.4, 0.032));
+      fuller.rotation.z = -0.36;
       mesh(new THREE.SphereGeometry(0.045, 8, 8), trim, weaponSocket, new THREE.Vector3(0, 0.065, 0));
     } else {
       mesh(new THREE.BoxGeometry(0.12, 0.045, 0.055), leather, hand, new THREE.Vector3(0, -0.09, 0));
@@ -340,6 +393,10 @@ export function createCharacterRig(race: Race): CharacterRig {
       if (tailBone) {
         tailBone.rotation.x = -0.55 + Math.sin(elapsed * 2.8) * 0.18;
         tailBone.rotation.z = Math.sin(elapsed * 2.1) * 0.16;
+      }
+      if (capeBone) {
+        capeBone.rotation.x = -0.08 - sprintBlend * 0.18 + Math.sin(elapsed * 5 + stride) * movementBlend * 0.06;
+        capeBone.rotation.z = Math.sin(elapsed * 3.2) * (0.025 + sprintBlend * 0.04);
       }
       rig.rotation.z = THREE.MathUtils.damp(rig.rotation.z, dying * -1.15, 5, delta);
       rig.position.y = THREE.MathUtils.damp(rig.position.y, dying * -0.05, 5, delta);

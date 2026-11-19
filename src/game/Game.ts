@@ -16,6 +16,7 @@ import { UI } from '../ui/UI';
 interface HitEffect {
   points: THREE.Points;
   material: THREE.PointsMaterial;
+  ring: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
   velocities: THREE.Vector3[];
   remaining: number;
   duration: number;
@@ -308,7 +309,7 @@ export class Game {
       damage,
       direction: target.offset.normalize(),
       sequence,
-      remaining: [0.1, 0.12, 0.17][sequence],
+      remaining: [0.24, 0.27, 0.3][sequence],
     };
   }
 
@@ -345,6 +346,19 @@ export class Game {
     points.position.copy(position);
     points.frustumCulled = false;
     this.world.scene.add(points);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: sequence === 2 ? 0x9fe8ff : sequence === 1 ? 0xff9d55 : 0xffd66b,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 6, 24), ringMaterial);
+    ring.position.copy(position);
+    ring.quaternion.copy(this.camera.quaternion);
+    ring.frustumCulled = false;
+    this.world.scene.add(ring);
     const velocities = Array.from({ length: count }, (_, index) => {
       const angle = (index / count) * Math.PI * 2;
       const speed = 1.2 + (index % 3) * 0.35;
@@ -354,7 +368,7 @@ export class Game {
         Math.sin(angle) * speed,
       );
     });
-    this.hitEffects.push({ points, material, velocities, remaining: 0.28, duration: 0.28 });
+    this.hitEffects.push({ points, material, ring, velocities, remaining: 0.32, duration: 0.32 });
   }
 
   private updateHitEffects(delta: number): void {
@@ -375,10 +389,16 @@ export class Game {
       }
       positions.needsUpdate = true;
       effect.material.opacity = 0.95 * (1 - progress);
+      effect.ring.scale.setScalar(0.65 + progress * 2.1);
+      effect.ring.rotation.z = progress * 1.1;
+      effect.ring.material.opacity = 0.9 * (1 - progress);
       if (effect.remaining === 0) {
         this.world.scene.remove(effect.points);
+        this.world.scene.remove(effect.ring);
         effect.points.geometry.dispose();
         effect.material.dispose();
+        effect.ring.geometry.dispose();
+        effect.ring.material.dispose();
         this.hitEffects.splice(index, 1);
       }
     }
@@ -614,8 +634,11 @@ export class Game {
   private clearHitEffects(): void {
     for (const effect of this.hitEffects) {
       this.world.scene.remove(effect.points);
+      this.world.scene.remove(effect.ring);
       effect.points.geometry.dispose();
       effect.material.dispose();
+      effect.ring.geometry.dispose();
+      effect.ring.material.dispose();
     }
     this.hitEffects.length = 0;
   }
